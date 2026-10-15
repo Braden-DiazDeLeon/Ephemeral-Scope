@@ -1,0 +1,1 @@
+"""API snapshot construction."""

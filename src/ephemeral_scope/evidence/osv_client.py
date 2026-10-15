@@ -1,0 +1,1 @@
+"""OSV vulnerability retrieval."""
