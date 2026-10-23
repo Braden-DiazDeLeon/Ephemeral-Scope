@@ -59,7 +59,9 @@ class ProjectLoader:
         with zipfile.ZipFile(archive, "r") as zf:
             for member in zf.namelist():
                 resolved = (tmp_path / member).resolve()
-                if not str(resolved).startswith(str(tmp_path) + "/") and resolved != tmp_path:
+                # Component-wise, so the check holds on Windows too, where a
+                # string comparison against "/" would reject every entry.
+                if not resolved.is_relative_to(tmp_path):
                     raise ValueError(
                         f"Zip entry would escape target directory: {member}"
                     )

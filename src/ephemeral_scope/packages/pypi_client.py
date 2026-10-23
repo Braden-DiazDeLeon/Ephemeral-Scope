@@ -123,5 +123,7 @@ def _extract(archive: Path, target: Path) -> None:
 
 def _ensure_contained(target: Path, member: str) -> None:
     resolved = (target / member).resolve()
-    if resolved != target and not str(resolved).startswith(str(target) + "/"):
+    # Component-wise, so the check holds on Windows too, where a string
+    # comparison against "/" would reject every entry.
+    if not resolved.is_relative_to(target):
         raise PyPIError(f"Archive entry would escape target directory: {member}")
