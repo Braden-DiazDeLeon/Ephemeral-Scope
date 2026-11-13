@@ -4,24 +4,16 @@ from __future__ import annotations
 
 import json
 import shutil
-import ssl
 import tarfile
 import tempfile
 import urllib.error
 import urllib.request
 import zipfile
-from functools import cache
 from pathlib import Path
 
-import certifi
+from ephemeral_scope.http_cache import ssl_context as _ssl_context
 
 PYPI_BASE_URL = "https://pypi.org/pypi"
-
-
-@cache
-def _ssl_context() -> ssl.SSLContext:
-    """Trust certifi's CA bundle needed for macOS"""
-    return ssl.create_default_context(cafile=certifi.where())
 
 
 class PyPIError(RuntimeError):
