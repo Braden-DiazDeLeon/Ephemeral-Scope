@@ -151,6 +151,9 @@ class ReleaseNoteItem:
     text: str
     release_version: str
     source_url: str | None = None
+    package_name: str | None = None
+    #: The changelog heading the statement sat under
+    section: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from packaging.version import InvalidVersion, Version
 
 from ephemeral_scope.domain.models import DependencyUpgrade, ReleaseNoteItem
@@ -11,8 +14,30 @@ from ephemeral_scope.http_cache import HttpCache
 
 PYPI_JSON_URL = "https://pypi.org/pypi"
 GITHUB_API_URL = "https://api.github.com"
+GITHUB_PAGE_SIZE = 100
 
 _GITHUB_REPO = re.compile(r"github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", re.I)
+# github.com paths that look like `owner/name` but are site features, not
+# repositories. Funding links such as github.com/sponsors/<user> are the
+# common in PyPI project_urls.
+_RESERVED_OWNERS = frozenset(
+    {
+        "sponsors",
+        "orgs",
+        "users",
+        "apps",
+        "features",
+        "marketplace",
+        "topics",
+        "collections",
+        "explore",
+        "settings",
+        "about",
+        "pricing",
+        "security",
+        "readme",
+    }
+)
 _CODE_FENCE = re.compile(r"```.*?```", re.S)
 _HTML_TAG = re.compile(r"<[^>]+>")
 _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
@@ -24,6 +49,17 @@ _UNDERLINE = re.compile(r"^[-=~^\"'`#*+<>_.]{3,}$")
 # label rather than a claim.
 _BOLD_HEADING = re.compile(r"^(?:\*\*|__)[^*_]+(?:\*\*|__):?$")
 _TRAILING_ATTRIBUTION = re.compile(r"\s+by\s+@[\w-]+\s+in\s+\S+$", re.I)
+# A heading that is really the release title like "2.32.0 (2024-05-20)".
+# It names the release not a category, so it is not a section.
+_RELEASE_TITLE = re.compile(r"^v?\d+\.\d+")
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedStatement:
+    """One claim from a release body, with the heading it appeared under."""
+
+    text: str
+    section: str | None = None
 
 
 class ReleaseNotesClient:
@@ -43,35 +79,75 @@ class ReleaseNotesClient:
         Returns an empty list when the project's repository cannot be found or
         its releases are unavailable; evidence gathering is best-effort.
         """
-        repository = self.find_repository(upgrade.package_name)
+        lower, upper = _parse(upgrade.current_version), _parse(upgrade.target_version)
+        return self._to_items(
+            upgrade.package_name,
+            self._get_releases(upgrade.package_name),
+            keep=lambda version: _in_range(version, lower, upper),
+        )
+
+    def get_all_notes(self, package_name: str) -> list[ReleaseNoteItem]:
+        """Return every statement the project has ever published.
+
+        Intended for building a training corpus, where restricting to an
+        upgrade window would throw away most of the available text.
+        """
+        return self._to_items(
+            package_name,
+            self._get_releases(package_name),
+            keep=lambda version: version is not None,
+        )
+
+    def _get_releases(self, package_name: str) -> list[dict]:
+        """Fetch every release page for a package's GitHub repository.
+
+        GitHub caps a page at 100 entries, so a project with a long history
+        would be silently truncated without following the pages. Each page is
+        a distinct URL and therefore cached separately.
+        """
+        repository = self.find_repository(package_name)
         if repository is None:
             return []
 
-        releases = self.http.get_json(
-            f"{GITHUB_API_URL}/repos/{repository}/releases?per_page=100",
-            headers=self._github_headers(),
-        )
-        if not isinstance(releases, list):
-            return []
+        releases: list[dict] = []
+        page = 1
+        while True:
+            batch = self.http.get_json(
+                f"{GITHUB_API_URL}/repos/{repository}/releases"
+                f"?per_page={GITHUB_PAGE_SIZE}&page={page}",
+                headers=self._github_headers(),
+            )
+            if not isinstance(batch, list) or not batch:
+                break
+            releases.extend(entry for entry in batch if isinstance(entry, dict))
+            if len(batch) < GITHUB_PAGE_SIZE:
+                break
+            page += 1
+        return releases
 
-        lower, upper = _parse(upgrade.current_version), _parse(upgrade.target_version)
-
+    def _to_items(
+        self,
+        package_name: str,
+        releases: list[dict],
+        keep: Callable[[Version | None], bool],
+    ) -> list[ReleaseNoteItem]:
         items: list[ReleaseNoteItem] = []
         for release in releases:
-            if not isinstance(release, dict) or release.get("draft"):
+            if release.get("draft"):
                 continue
             label = release.get("tag_name") or release.get("name") or ""
-            version = _parse(label)
-            if not _in_range(version, lower, upper):
+            if not keep(_parse(label)):
                 continue
 
             url = release.get("html_url")
-            for statement in split_statements(release.get("body") or ""):
+            for statement in split_statement_records(release.get("body") or ""):
                 items.append(
                     ReleaseNoteItem(
-                        text=statement,
+                        text=statement.text,
                         release_version=_normalize(label),
                         source_url=url,
+                        package_name=package_name,
+                        section=statement.section,
                     )
                 )
         return items
@@ -90,7 +166,7 @@ class ReleaseNotesClient:
             if not isinstance(url, str):
                 continue
             match = _GITHUB_REPO.search(url.strip())
-            if match:
+            if match and match.group(1).lower() not in _RESERVED_OWNERS:
                 return f"{match.group(1)}/{match.group(2)}"
         return None
 
@@ -101,40 +177,63 @@ class ReleaseNotesClient:
         return headers
 
 
-def split_statements(body: str) -> list[str]:
-    """Break a release body into individually classifiable statements.
+def split_statement_records(body: str) -> list[ParsedStatement]:
+    """Break a release body into claims, each tagged with its heading.
 
     Downstream classification scores one claim at a time, so a bullet list has
     to become one statement per bullet rather than a single blob of markdown.
 
     Changelogs hard-wrap prose, so lines are first regrouped into blocks: a
     bullet absorbs its continuation lines instead of being torn into
-    fragments mid-sentence.
+    fragments mid-sentence. The heading above a block
+    is kept, because it is a strong label signal for training.
     """
-    blocks = _blocks(_CODE_FENCE.sub(" ", body.replace("\r\n", "\n")))
+    statements: list[ParsedStatement] = []
+    seen: set[str] = set()
 
-    statements: list[str] = []
-    for is_bullet, lines in blocks:
+    for is_bullet, lines, section in _blocks(
+        _CODE_FENCE.sub(" ", body.replace("\r\n", "\n"))
+    ):
         text = _clean(" ".join(lines))
         if not text or text.lower().startswith("full changelog"):
             continue
         # A bullet is already one claim; a paragraph may pack several together.
         pieces = [text] if is_bullet else _SENTENCE_SPLIT.split(text)
-        statements.extend(piece.strip() for piece in pieces if len(piece.strip()) > 2)
+        for piece in pieces:
+            piece = piece.strip()
+            if len(piece) > 2 and piece not in seen:
+                seen.add(piece)
+                statements.append(ParsedStatement(text=piece, section=section))
 
-    return list(dict.fromkeys(statements))
+    return statements
 
 
-def _blocks(body: str) -> list[tuple[bool, list[str]]]:
-    """Group wrapped lines into (is_bullet, lines) blocks, dropping headings."""
-    blocks: list[tuple[bool, list[str]]] = []
+def split_statements(body: str) -> list[str]:
+    """Break a release body into statements, discarding heading metadata."""
+    return [statement.text for statement in split_statement_records(body)]
+
+
+def _blocks(body: str) -> list[tuple[bool, list[str], str | None]]:
+    """Group wrapped lines into (is_bullet, lines, section) blocks.
+
+    Headings are consumed rather than emitted: each one becomes the section
+    applied to the blocks that follow it.
+    """
+    blocks: list[tuple[bool, list[str], str | None]] = []
     current: tuple[bool, list[str]] | None = None
+    section: str | None = None
 
     def flush() -> None:
         nonlocal current
         if current is not None:
-            blocks.append(current)
+            blocks.append((current[0], current[1], section))
             current = None
+
+    def set_section(text: str) -> None:
+        nonlocal section
+        cleaned = _clean(text).rstrip(":")
+        # A release title names the release, not a category of change.
+        section = None if _RELEASE_TITLE.match(cleaned) else (cleaned or None)
 
     for raw in body.split("\n"):
         line = raw.strip()
@@ -142,10 +241,16 @@ def _blocks(body: str) -> list[tuple[bool, list[str]]]:
         if not line:
             flush()
         elif _UNDERLINE.match(line):
-            # The line above was a heading, not prose: discard both.
+            # The line above was a heading, not prose: it names this section.
+            if current is not None and not current[0]:
+                set_section(" ".join(current[1]))
             current = None
-        elif line.startswith("#") or _BOLD_HEADING.match(line):
+        elif line.startswith("#"):
             flush()
+            set_section(line.lstrip("#"))
+        elif _BOLD_HEADING.match(line):
+            flush()
+            set_section(line)
         elif _BULLET.match(line):
             flush()
             current = (True, [_BULLET.sub("", line)])

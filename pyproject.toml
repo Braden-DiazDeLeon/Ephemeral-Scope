@@ -10,11 +10,19 @@ dependencies = [
     "packaging",
     "griffe",
     "certifi",
+    # Required at runtime to load the saved classifier pipeline, not just
+    # to train it.
+    "scikit-learn",
+    "joblib",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+]
+
+embeddings = [
+    "sentence-transformers",
 ]
 
 [tool.setuptools.packages.find]
