@@ -32,6 +32,10 @@ from ephemeral_scope.ml.trainer import (
 )
 
 
+#: Marks a model trained on keyword guesses rather than verified labels.
+WEAK_SUFFIX = "_weak"
+
+
 def load(path: Path | None, require_verified: bool) -> list[LabeledNote]:
     if path is None:
         return []
@@ -69,6 +73,18 @@ def main() -> int:
         help="train on keyword suggestions where no verified label exists",
     )
     args = parser.parse_args()
+
+    # A model trained on keyword guesses only reproduces the regexes, so it
+    # must never land on the path the runtime loads. Renaming one by hand
+    # already failed once; make the script refuse instead.
+    if args.allow_suggested and not args.out.stem.endswith(WEAK_SUFFIX):
+        print(
+            f"Refusing to write {args.out}: --allow-suggested trains on keyword "
+            f"guesses, not verified labels. Use a path ending in "
+            f"'{WEAK_SUFFIX}.joblib' to mark it as a diagnostic model.",
+            file=sys.stderr,
+        )
+        return 1
 
     require_verified = not args.allow_suggested
     training = load(args.train, require_verified)

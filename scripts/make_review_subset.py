@@ -36,17 +36,27 @@ DEFAULT_SEED = 20261116
 
 
 def balanced_sample(
-    notes: list[LabeledNote], per_label: int, seed: int
+    notes: list[LabeledNote], per_label: int, unlabelled: int, seed: int
 ) -> list[LabeledNote]:
-    """Take up to ``per_label`` notes of each suggested label.
+    """Take up to ``per_label`` notes of each suggested label, plus misses.
 
     Categories with fewer than ``per_label`` candidates contribute everything
     they have, so the result is as balanced as the data allows rather than
     truncated to the rarest category.
+
+    ``unlabelled`` reserves a budget for statements the keyword rules did not
+    recognise at all. Without it the verified set would contain only text the
+    rules already match, and the experiment could never show TF-IDF beating
+    them: the rule misses are exactly where a learned model has room to win.
+    Most will turn out to be irrelevant, but the ones that are not are the
+    breaking and behavioural examples the rules are blind to.
     """
     by_label: dict[str, list[LabeledNote]] = defaultdict(list)
+    misses: list[LabeledNote] = []
     for note in notes:
-        if note.suggested_label is not None:
+        if note.suggested_label is None:
+            misses.append(note)
+        else:
             by_label[note.suggested_label.value].append(note)
 
     rng = random.Random(seed)
@@ -57,6 +67,12 @@ def balanced_sample(
             sample.extend(candidates)
         else:
             sample.extend(rng.sample(candidates, per_label))
+
+    if unlabelled > 0:
+        if len(misses) <= unlabelled:
+            sample.extend(misses)
+        else:
+            sample.extend(rng.sample(misses, unlabelled))
 
     # Shuffle so a reviewer does not see every security statement in one run
     # and start pattern-matching on position instead of reading.
@@ -71,6 +87,12 @@ def main() -> int:
     parser.add_argument(
         "--per-label", type=int, default=60, help="target statements per category"
     )
+    parser.add_argument(
+        "--unlabelled",
+        type=int,
+        default=60,
+        help="statements the keyword rules did not recognise at all",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     args = parser.parse_args()
 
@@ -79,11 +101,14 @@ def main() -> int:
         print(f"{args.source} is empty.", file=sys.stderr)
         return 1
 
-    sample = balanced_sample(notes, args.per_label, args.seed)
+    sample = balanced_sample(notes, args.per_label, args.unlabelled, args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(args.out, sample)
 
-    counts = Counter(note.suggested_label.value for note in sample)
+    counts = Counter(
+        note.suggested_label.value if note.suggested_label else "(no suggestion)"
+        for note in sample
+    )
     print(f"Sampled {len(sample)} of {len(notes)} statements into {args.out}")
     for category in ReleaseNoteCategory:
         available = sum(
@@ -91,6 +116,9 @@ def main() -> int:
         )
         flag = "" if counts[category.value] >= args.per_label else "  (all available)"
         print(f"  {category.value:<20}{counts[category.value]:>5} of {available}{flag}")
+
+    missed = sum(1 for n in notes if n.suggested_label is None)
+    print(f"  {'(no suggestion)':<20}{counts['(no suggestion)']:>5} of {missed}")
 
     print("\nSet `verified_label` on every row, correcting the suggestion where")
     print("it is wrong, then train with the verified file.")

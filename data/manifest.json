@@ -1,6 +1,6 @@
 {
-  "collected_on": "2026-11-17",
-  "code_commit": "0747ba02443f5f998093427a2c40517016390216",
+  "collected_on": "2026-11-18",
+  "code_commit": "6add20cf60bd6a11d8bfb65733e9663a14d9614e",
   "source": "GitHub Releases API",
   "note": "data/generated/ and models/ are not committed. Rebuild with scripts/build_training_dataset.py --all, then compare the hashes below. Release notes are the upstream projects' own text and are redistributed here only as the verified subsets.",
   "splits": {
@@ -105,18 +105,18 @@
       },
       "verified": {
         "path": "data/verified/train.jsonl",
-        "sha256": "ec209e00918c7f8d7a943952cab2ca301c99a17d6d8eb81554f55dc859ca11d3",
-        "bytes": 139207,
-        "statements": 415,
-        "verified": 0,
+        "sha256": "8edc6c3d848ba0acd716d5a9a1cba2038b8acb825aeb4a0c9125bd7d5dece3cc",
+        "bytes": 93866,
+        "statements": 237,
+        "verified": 237,
         "labels": {
-          "breaking_change": 60,
-          "feature": 60,
-          "behavioral_change": 60,
-          "bug_fix": 60,
-          "irrelevant": 60,
-          "deprecation": 60,
-          "security_fix": 55
+          "irrelevant": 78,
+          "breaking_change": 38,
+          "feature": 30,
+          "bug_fix": 25,
+          "security_fix": 25,
+          "behavioral_change": 24,
+          "deprecation": 17
         }
       }
     },
@@ -173,18 +173,18 @@
       },
       "verified": {
         "path": "data/verified/validation.jsonl",
-        "sha256": "9e3c9c614f45aadcc12c6b2d077c2bfd4ed553e53ff9e29d2cabab3e9c8dd509",
-        "bytes": 132816,
-        "statements": 387,
-        "verified": 0,
+        "sha256": "1bb414755ed3105ed1bccafd9212613b84148fa6c4563c0c110967cc73dd81bb",
+        "bytes": 89804,
+        "statements": 252,
+        "verified": 252,
         "labels": {
-          "bug_fix": 60,
-          "deprecation": 60,
-          "irrelevant": 60,
-          "breaking_change": 60,
-          "behavioral_change": 60,
-          "feature": 60,
-          "security_fix": 27
+          "irrelevant": 88,
+          "breaking_change": 37,
+          "deprecation": 28,
+          "bug_fix": 26,
+          "behavioral_change": 25,
+          "security_fix": 25,
+          "feature": 23
         }
       }
     },
@@ -241,18 +241,18 @@
       },
       "verified": {
         "path": "data/verified/test.jsonl",
-        "sha256": "c0fb9ffe35c11da80e11843e6d3b0447f5bb6d936f40a77f57220d31a0b51652",
-        "bytes": 123419,
-        "statements": 377,
-        "verified": 0,
+        "sha256": "e56a2f029863e3a459a596f58ae186767a97369862733298eab3337eaf1e7880",
+        "bytes": 95778,
+        "statements": 283,
+        "verified": 283,
         "labels": {
-          "deprecation": 60,
-          "bug_fix": 60,
-          "breaking_change": 60,
-          "feature": 60,
-          "behavioral_change": 60,
-          "security_fix": 39,
-          "irrelevant": 38
+          "irrelevant": 74,
+          "breaking_change": 46,
+          "feature": 40,
+          "behavioral_change": 34,
+          "security_fix": 33,
+          "bug_fix": 32,
+          "deprecation": 24
         }
       }
     }
@@ -260,16 +260,17 @@
   "case_studies": [
     {
       "path": "data/case_studies/requests.jsonl",
-      "sha256": "804fe925ee0bf758f6f4192fb4a2ef16916c4244dc6e2a10db28e97868f19ace",
-      "bytes": 29420,
-      "statements": 85,
-      "verified": 0,
+      "sha256": "a46bc28c6740b4aae22a0d6a9bd504377cb78aa8b54dfd9d5c4540ffaef4c8e9",
+      "bytes": 10373,
+      "statements": 29,
+      "verified": 29,
       "labels": {
-        "bug_fix": 31,
-        "feature": 19,
-        "deprecation": 14,
-        "security_fix": 9,
-        "irrelevant": 9
+        "irrelevant": 11,
+        "security_fix": 7,
+        "behavioral_change": 4,
+        "bug_fix": 3,
+        "breaking_change": 3,
+        "feature": 1
       }
     }
   ]
