@@ -10,19 +10,21 @@ dependencies = [
     "packaging",
     "griffe",
     "certifi",
-    # Required at runtime to load the saved classifier pipeline, not just
-    # to train it.
-    "scikit-learn",
-    "joblib",
+    # Required at runtime to load the saved classifier pipeline, not just to
+    # train it. Pinned exactly: joblib stores the estimator's class layout, so
+    # loading models/release_note_classifier.joblib under a different
+    # scikit-learn emits InconsistentVersionWarning and may silently alter
+    # predictions. Retrain and re-pin together.
+    "scikit-learn==1.9.1",
+    # 1.6.0, not 1.5.3: under NumPy 2.5 joblib 1.5.3 still sets `array.shape`
+    # during unpickling, which raises DeprecationWarning and fails a
+    # -W error load. 1.6.0 reads the same file cleanly.
+    "joblib==1.6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
-]
-
-embeddings = [
-    "sentence-transformers",
 ]
 
 [tool.setuptools.packages.find]

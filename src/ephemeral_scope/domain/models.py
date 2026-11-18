@@ -10,6 +10,7 @@ from ephemeral_scope.domain.enums import (
     ChangeType,
     ReleaseNoteCategory,
     RiskLevel,
+    SelectionReason,
     UsageKind,
 )
 
@@ -166,13 +167,77 @@ class VulnerabilityRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ClassificationDecision:
+    """Both classifiers' answers plus the reason one of them was chosen.
+
+    Keeping the rule and the model side by side means a disagreement shows up
+    in the report rather than being averaged away. ``selected_category`` is
+    ``None`` when neither could categorise the statement, which is a
+    different claim from IRRELEVANT: one says the classifiers had nothing to
+    offer, the other says the statement genuinely does not matter.
+    """
+
+    selected_category: ReleaseNoteCategory | None
+    rule_category: ReleaseNoteCategory | None
+    rule_confidence: float
+    model_category: ReleaseNoteCategory | None
+    model_confidence: float
+    agreement: bool
+    selection_reason: SelectionReason
+
+    @property
+    def confidence(self) -> float:
+        """Confidence in ``selected_category``.
+
+        Agreement between two independent classifiers is worth more than
+        either alone, so it is scored above the rule's own confidence while
+        still capped below certainty.
+        """
+        if self.selection_reason is SelectionReason.RULE_MODEL_AGREEMENT:
+            return min(0.95, self.rule_confidence + 0.2)
+        if self.selected_category is None:
+            return 0.0
+        if self.model_category is not None and self.rule_category is None:
+            return self.model_confidence
+        return self.rule_confidence
+
+    @property
+    def is_model_only(self) -> bool:
+        """True when nothing but the TF-IDF model supports the category.
+
+        Risk rules consult this: a statement no deterministic rule recognised
+        must not on its own raise a high-risk finding.
+        """
+        return self.selection_reason is SelectionReason.MODEL_SUGGESTION_ONLY
+
+    def to_dict(self) -> dict:
+        return {
+            "selected_category": _category_value(self.selected_category),
+            "rule_category": _category_value(self.rule_category),
+            "rule_confidence": round(self.rule_confidence, 4),
+            "model_category": _category_value(self.model_category),
+            "model_confidence": round(self.model_confidence, 4),
+            "agreement": self.agreement,
+            "selection_reason": str(self.selection_reason),
+            "confidence": round(self.confidence, 4),
+        }
+
+
+def _category_value(category: ReleaseNoteCategory | None) -> str | None:
+    return None if category is None else str(category)
+
+
+@dataclass(frozen=True, slots=True)
 class ClassifiedChange:
     note: ReleaseNoteItem
-    category: ReleaseNoteCategory
+    #: ``None`` when no classifier could categorise the statement.
+    category: ReleaseNoteCategory | None
     confidence: float
     mentioned_symbols: tuple[str, ...] = ()
     matched_project_symbols: tuple[str, ...] = ()
     relevance_score: float = 0.0
+    #: Provenance for ``category``; ``None`` predates the hybrid policy.
+    decision: ClassificationDecision | None = None
 
 
 @dataclass(frozen=True, slots=True)

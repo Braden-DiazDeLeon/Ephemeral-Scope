@@ -1,0 +1,573 @@
+{
+  "generated_on": "2026-11-18",
+  "training_examples": 237,
+  "majority_class": "irrelevant",
+  "rule_model_agreement": {
+    "validation": 0.2937,
+    "test": 0.3145
+  },
+  "method_names": {
+    "majority": "Majority baseline",
+    "keyword_rule": "Keyword-rule baseline",
+    "section_and_keyword": "Section-and-keyword baseline",
+    "tfidf": "TF-IDF classifier",
+    "hybrid": "Hybrid Ephemeral Scope pipeline"
+  },
+  "unclassified_label": "(unclassified)",
+  "results": [
+    {
+      "method": "majority",
+      "method_name": "Majority baseline",
+      "split": "validation",
+      "examples": 252,
+      "accuracy": 0.3492,
+      "macro_f1": 0.0739,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 25
+        },
+        "breaking_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 37
+        },
+        "bug_fix": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 26
+        },
+        "deprecation": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 28
+        },
+        "feature": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 23
+        },
+        "irrelevant": {
+          "precision": 0.3492,
+          "recall": 1.0,
+          "f1": 0.5176,
+          "support": 88
+        },
+        "security_fix": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 25
+        }
+      },
+      "rule_model_agreement": 0.2937
+    },
+    {
+      "method": "keyword_rule",
+      "method_name": "Keyword-rule baseline",
+      "split": "validation",
+      "examples": 252,
+      "accuracy": 0.4325,
+      "macro_f1": 0.4556,
+      "per_class": {
+        "(unclassified)": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 0
+        },
+        "behavioral_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 25
+        },
+        "breaking_change": {
+          "precision": 1.0,
+          "recall": 0.3243,
+          "f1": 0.4898,
+          "support": 37
+        },
+        "bug_fix": {
+          "precision": 0.7273,
+          "recall": 0.6154,
+          "f1": 0.6667,
+          "support": 26
+        },
+        "deprecation": {
+          "precision": 0.7391,
+          "recall": 0.6071,
+          "f1": 0.6667,
+          "support": 28
+        },
+        "feature": {
+          "precision": 0.3684,
+          "recall": 0.3043,
+          "f1": 0.3333,
+          "support": 23
+        },
+        "irrelevant": {
+          "precision": 0.8919,
+          "recall": 0.375,
+          "f1": 0.528,
+          "support": 88
+        },
+        "security_fix": {
+          "precision": 0.96,
+          "recall": 0.96,
+          "f1": 0.96,
+          "support": 25
+        }
+      },
+      "rule_model_agreement": 0.2937
+    },
+    {
+      "method": "section_and_keyword",
+      "method_name": "Section-and-keyword baseline",
+      "split": "validation",
+      "examples": 252,
+      "accuracy": 0.5595,
+      "macro_f1": 0.5569,
+      "per_class": {
+        "(unclassified)": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 0
+        },
+        "behavioral_change": {
+          "precision": 0.0333,
+          "recall": 0.04,
+          "f1": 0.0364,
+          "support": 25
+        },
+        "breaking_change": {
+          "precision": 0.7333,
+          "recall": 0.5946,
+          "f1": 0.6567,
+          "support": 37
+        },
+        "bug_fix": {
+          "precision": 0.8,
+          "recall": 0.9231,
+          "f1": 0.8571,
+          "support": 26
+        },
+        "deprecation": {
+          "precision": 0.8,
+          "recall": 0.8571,
+          "f1": 0.8276,
+          "support": 28
+        },
+        "feature": {
+          "precision": 0.5667,
+          "recall": 0.7391,
+          "f1": 0.6415,
+          "support": 23
+        },
+        "irrelevant": {
+          "precision": 0.9333,
+          "recall": 0.3182,
+          "f1": 0.4746,
+          "support": 88
+        },
+        "security_fix": {
+          "precision": 0.9259,
+          "recall": 1.0,
+          "f1": 0.9615,
+          "support": 25
+        }
+      },
+      "rule_model_agreement": 0.2937
+    },
+    {
+      "method": "tfidf",
+      "method_name": "TF-IDF classifier",
+      "split": "validation",
+      "examples": 252,
+      "accuracy": 0.4325,
+      "macro_f1": 0.4151,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.2,
+          "recall": 0.44,
+          "f1": 0.275,
+          "support": 25
+        },
+        "breaking_change": {
+          "precision": 0.3469,
+          "recall": 0.4595,
+          "f1": 0.3953,
+          "support": 37
+        },
+        "bug_fix": {
+          "precision": 0.3182,
+          "recall": 0.2692,
+          "f1": 0.2917,
+          "support": 26
+        },
+        "deprecation": {
+          "precision": 0.6471,
+          "recall": 0.3929,
+          "f1": 0.4889,
+          "support": 28
+        },
+        "feature": {
+          "precision": 0.1471,
+          "recall": 0.2174,
+          "f1": 0.1754,
+          "support": 23
+        },
+        "irrelevant": {
+          "precision": 0.7679,
+          "recall": 0.4886,
+          "f1": 0.5972,
+          "support": 88
+        },
+        "security_fix": {
+          "precision": 0.7895,
+          "recall": 0.6,
+          "f1": 0.6818,
+          "support": 25
+        }
+      },
+      "rule_model_agreement": 0.2937
+    },
+    {
+      "method": "hybrid",
+      "method_name": "Hybrid Ephemeral Scope pipeline",
+      "split": "validation",
+      "examples": 252,
+      "accuracy": 0.623,
+      "macro_f1": 0.6483,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.1463,
+          "recall": 0.24,
+          "f1": 0.1818,
+          "support": 25
+        },
+        "breaking_change": {
+          "precision": 0.6,
+          "recall": 0.6486,
+          "f1": 0.6234,
+          "support": 37
+        },
+        "bug_fix": {
+          "precision": 0.7273,
+          "recall": 0.9231,
+          "f1": 0.8136,
+          "support": 26
+        },
+        "deprecation": {
+          "precision": 0.7742,
+          "recall": 0.8571,
+          "f1": 0.8136,
+          "support": 28
+        },
+        "feature": {
+          "precision": 0.4737,
+          "recall": 0.7826,
+          "f1": 0.5902,
+          "support": 23
+        },
+        "irrelevant": {
+          "precision": 0.8571,
+          "recall": 0.4091,
+          "f1": 0.5538,
+          "support": 88
+        },
+        "security_fix": {
+          "precision": 0.9259,
+          "recall": 1.0,
+          "f1": 0.9615,
+          "support": 25
+        }
+      },
+      "rule_model_agreement": 0.2937
+    },
+    {
+      "method": "majority",
+      "method_name": "Majority baseline",
+      "split": "test",
+      "examples": 283,
+      "accuracy": 0.2615,
+      "macro_f1": 0.0592,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 34
+        },
+        "breaking_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 46
+        },
+        "bug_fix": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 32
+        },
+        "deprecation": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 24
+        },
+        "feature": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 40
+        },
+        "irrelevant": {
+          "precision": 0.2615,
+          "recall": 1.0,
+          "f1": 0.4146,
+          "support": 74
+        },
+        "security_fix": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 33
+        }
+      },
+      "rule_model_agreement": 0.3145
+    },
+    {
+      "method": "keyword_rule",
+      "method_name": "Keyword-rule baseline",
+      "split": "test",
+      "examples": 283,
+      "accuracy": 0.4664,
+      "macro_f1": 0.502,
+      "per_class": {
+        "(unclassified)": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 0
+        },
+        "behavioral_change": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 34
+        },
+        "breaking_change": {
+          "precision": 0.9231,
+          "recall": 0.2609,
+          "f1": 0.4068,
+          "support": 46
+        },
+        "bug_fix": {
+          "precision": 0.7419,
+          "recall": 0.7188,
+          "f1": 0.7302,
+          "support": 32
+        },
+        "deprecation": {
+          "precision": 0.7667,
+          "recall": 0.9583,
+          "f1": 0.8519,
+          "support": 24
+        },
+        "feature": {
+          "precision": 0.8571,
+          "recall": 0.75,
+          "f1": 0.8,
+          "support": 40
+        },
+        "irrelevant": {
+          "precision": 0.6333,
+          "recall": 0.2568,
+          "f1": 0.3654,
+          "support": 74
+        },
+        "security_fix": {
+          "precision": 1.0,
+          "recall": 0.7576,
+          "f1": 0.8621,
+          "support": 33
+        }
+      },
+      "rule_model_agreement": 0.3145
+    },
+    {
+      "method": "section_and_keyword",
+      "method_name": "Section-and-keyword baseline",
+      "split": "test",
+      "examples": 283,
+      "accuracy": 0.636,
+      "macro_f1": 0.6209,
+      "per_class": {
+        "(unclassified)": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 0
+        },
+        "behavioral_change": {
+          "precision": 0.4412,
+          "recall": 0.4412,
+          "f1": 0.4412,
+          "support": 34
+        },
+        "breaking_change": {
+          "precision": 0.8824,
+          "recall": 0.6522,
+          "f1": 0.75,
+          "support": 46
+        },
+        "bug_fix": {
+          "precision": 0.7941,
+          "recall": 0.8438,
+          "f1": 0.8182,
+          "support": 32
+        },
+        "deprecation": {
+          "precision": 0.6471,
+          "recall": 0.9167,
+          "f1": 0.7586,
+          "support": 24
+        },
+        "feature": {
+          "precision": 0.8824,
+          "recall": 0.75,
+          "f1": 0.8108,
+          "support": 40
+        },
+        "irrelevant": {
+          "precision": 0.7353,
+          "recall": 0.3378,
+          "f1": 0.463,
+          "support": 74
+        },
+        "security_fix": {
+          "precision": 0.9118,
+          "recall": 0.9394,
+          "f1": 0.9254,
+          "support": 33
+        }
+      },
+      "rule_model_agreement": 0.3145
+    },
+    {
+      "method": "tfidf",
+      "method_name": "TF-IDF classifier",
+      "split": "test",
+      "examples": 283,
+      "accuracy": 0.4064,
+      "macro_f1": 0.3968,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.2571,
+          "recall": 0.2647,
+          "f1": 0.2609,
+          "support": 34
+        },
+        "breaking_change": {
+          "precision": 0.4583,
+          "recall": 0.7174,
+          "f1": 0.5593,
+          "support": 46
+        },
+        "bug_fix": {
+          "precision": 0.0667,
+          "recall": 0.0312,
+          "f1": 0.0426,
+          "support": 32
+        },
+        "deprecation": {
+          "precision": 0.6786,
+          "recall": 0.7917,
+          "f1": 0.7308,
+          "support": 24
+        },
+        "feature": {
+          "precision": 0.3182,
+          "recall": 0.175,
+          "f1": 0.2258,
+          "support": 40
+        },
+        "irrelevant": {
+          "precision": 0.3247,
+          "recall": 0.3378,
+          "f1": 0.3311,
+          "support": 74
+        },
+        "security_fix": {
+          "precision": 0.6176,
+          "recall": 0.6364,
+          "f1": 0.6269,
+          "support": 33
+        }
+      },
+      "rule_model_agreement": 0.3145
+    },
+    {
+      "method": "hybrid",
+      "method_name": "Hybrid Ephemeral Scope pipeline",
+      "split": "test",
+      "examples": 283,
+      "accuracy": 0.6855,
+      "macro_f1": 0.7036,
+      "per_class": {
+        "behavioral_change": {
+          "precision": 0.4222,
+          "recall": 0.5588,
+          "f1": 0.481,
+          "support": 34
+        },
+        "breaking_change": {
+          "precision": 0.6977,
+          "recall": 0.6522,
+          "f1": 0.6742,
+          "support": 46
+        },
+        "bug_fix": {
+          "precision": 0.7714,
+          "recall": 0.8438,
+          "f1": 0.806,
+          "support": 32
+        },
+        "deprecation": {
+          "precision": 0.6286,
+          "recall": 0.9167,
+          "f1": 0.7458,
+          "support": 24
+        },
+        "feature": {
+          "precision": 0.7692,
+          "recall": 0.75,
+          "f1": 0.7595,
+          "support": 40
+        },
+        "irrelevant": {
+          "precision": 0.7083,
+          "recall": 0.4595,
+          "f1": 0.5574,
+          "support": 74
+        },
+        "security_fix": {
+          "precision": 0.8421,
+          "recall": 0.9697,
+          "f1": 0.9014,
+          "support": 33
+        }
+      },
+      "rule_model_agreement": 0.3145
+    }
+  ]
+}

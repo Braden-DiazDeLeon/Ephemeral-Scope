@@ -16,6 +16,8 @@ data/generated/
 models/
 
 # Committed on purpose, so the experiment can be reproduced:
+#   results/*                  scores quoted in the report, from
+#                              scripts/evaluate_classifiers.py
 #   data/verified/*.jsonl      the balanced subsets carrying human labels
 #   data/case_studies/*.jsonl  the held-out requests corpus
 #   data/manifest.json         provenance for everything ignored above

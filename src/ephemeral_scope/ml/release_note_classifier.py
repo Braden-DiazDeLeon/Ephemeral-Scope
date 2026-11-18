@@ -5,10 +5,15 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
-from ephemeral_scope.domain.enums import ReleaseNoteCategory
-from ephemeral_scope.domain.models import ClassifiedChange, ReleaseNoteItem
+from ephemeral_scope.domain.enums import ReleaseNoteCategory, SelectionReason
+from ephemeral_scope.domain.models import (
+    ClassificationDecision,
+    ClassifiedChange,
+    ReleaseNoteItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +123,15 @@ KEYWORD_RULES: list[tuple[Category, re.Pattern[str]]] = [
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class RuleOutcome:
+    """What the deterministic rules concluded, and on what basis."""
+
+    category: Category | None
+    confidence: float
+    source: SelectionReason
+
+
 class KeywordReleaseNoteClassifier:
     """Rule-based labelling used to seed the dataset and as a fallback.
 
@@ -140,21 +154,91 @@ class KeywordReleaseNoteClassifier:
     def label_with_confidence(
         self, text: str, section: str | None = None
     ) -> tuple[Category, float]:
-        """Label a statement, reporting how much to trust the result."""
-        if section and section.strip().lower() in SECTION_LABELS:
-            return SECTION_LABELS[section.strip().lower()], 0.8
-        guess = self.label(text, section=None)
-        if guess is None:
+        """Label a statement, reporting how much to trust the result.
+
+        Falls back to IRRELEVANT so callers always get a category. Prefer
+        :meth:`label_with_source`, which reports "no rule matched" honestly.
+        """
+        outcome = self.label_with_source(text, section)
+        if outcome.category is None:
             return Category.IRRELEVANT, 0.1
-        return guess, 0.5
+        return outcome.category, outcome.confidence
+
+    def label_with_source(
+        self, text: str, section: str | None = None
+    ) -> RuleOutcome:
+        """Label a statement, reporting which mechanism fired.
+
+        A ``None`` category means no rule recognised the statement. That is
+        deliberately not collapsed into IRRELEVANT: the hybrid policy needs
+        to tell "the rules had nothing to say" apart from "the rules decided
+        this does not matter", because only the first leaves room for the
+        model to supply a category.
+        """
+        if section:
+            mapped = SECTION_LABELS.get(section.strip().lower())
+            if mapped is not None:
+                return RuleOutcome(mapped, 0.8, SelectionReason.SECTION_RULE)
+
+        for category, pattern in KEYWORD_RULES:
+            if pattern.search(text):
+                return RuleOutcome(category, 0.5, SelectionReason.KEYWORD_RULE)
+
+        return RuleOutcome(None, 0.0, SelectionReason.NO_EVIDENCE)
+
+
+def decide(
+    rule: RuleOutcome,
+    model_category: Category | None,
+    model_confidence: float,
+) -> ClassificationDecision:
+    """Combine a rule outcome and a model prediction into one decision.
+
+    An evidence hierarchy rather than a blend of probabilities. The two
+    classifiers are not interchangeable: the rules are deterministic and
+    auditable, while the model is a statistical guess trained on a few
+    hundred hand-labelled statements. Averaging their scores would let the
+    weaker signal quietly move an answer the rules were certain about, so
+    instead the model may corroborate a rule or speak where no rule fired,
+    but never overrule one.
+    """
+    agreement = (
+        rule.category is not None
+        and model_category is not None
+        and rule.category == model_category
+    )
+
+    if rule.category is not None and agreement:
+        selected, reason = rule.category, SelectionReason.RULE_MODEL_AGREEMENT
+    elif rule.category is not None and model_category is not None:
+        selected, reason = rule.category, SelectionReason.RULE_PREFERRED_OVER_MODEL
+    elif rule.category is not None:
+        # No model loaded at all, so name the rule that fired.
+        selected, reason = rule.category, rule.source
+    elif model_category is not None:
+        selected, reason = model_category, SelectionReason.MODEL_SUGGESTION_ONLY
+    else:
+        selected, reason = None, SelectionReason.NO_EVIDENCE
+
+    return ClassificationDecision(
+        selected_category=selected,
+        rule_category=rule.category,
+        rule_confidence=rule.confidence,
+        model_category=model_category,
+        model_confidence=model_confidence,
+        agreement=agreement,
+        selection_reason=reason,
+    )
 
 
 class ReleaseNoteClassifier:
     """Assigns change category and confidence.
 
-    Uses a trained scikit-learn pipeline when one is available and falls back
-    to the keyword rules, so the runtime pipeline works before any model has
-    been trained.
+    Runs the keyword rules always and the trained scikit-learn pipeline when
+    one is available, then reconciles them through :func:`decide`. Both
+    answers are kept on the resulting :class:`ClassificationDecision`, so the
+    report can say where a category came from and whether the two classifiers
+    agreed.
     """
 
     def __init__(self, model_path: Path | None = None) -> None:
@@ -165,32 +249,36 @@ class ReleaseNoteClassifier:
         """Assign a category and confidence to each release note."""
         if not notes:
             return []
-        if self.model is not None:
-            return self._classify_with_model(notes)
-        return [
-            ClassifiedChange(note=note, category=category, confidence=confidence)
-            for note in notes
-            for category, confidence in [
-                self.keyword_classifier.label_with_confidence(note.text, note.section)
-            ]
-        ]
 
-    def _classify_with_model(
+        model_categories, model_confidences = self._model_predictions(notes)
+
+        changes = []
+        for note, model_category, model_confidence in zip(
+            notes, model_categories, model_confidences
+        ):
+            rule = self.keyword_classifier.label_with_source(note.text, note.section)
+            decision = decide(rule, model_category, model_confidence)
+            changes.append(
+                ClassifiedChange(
+                    note=note,
+                    category=decision.selected_category,
+                    confidence=decision.confidence,
+                    decision=decision,
+                )
+            )
+        return changes
+
+    def _model_predictions(
         self, notes: Sequence[ReleaseNoteItem]
-    ) -> list[ClassifiedChange]:
+    ) -> tuple[list[Category | None], list[float]]:
+        if self.model is None:
+            return [None] * len(notes), [0.0] * len(notes)
+
         # Text only. The section heading is withheld from the model on
         # purpose: see the note on `to_xy` in ml.trainer.
         texts = [note.text for note in notes]
-        predictions = self.model.predict(texts)
-        confidences = _confidences(self.model, texts)
-        return [
-            ClassifiedChange(
-                note=note,
-                category=ReleaseNoteCategory(prediction),
-                confidence=confidence,
-            )
-            for note, prediction, confidence in zip(notes, predictions, confidences)
-        ]
+        predictions = [Category(value) for value in self.model.predict(texts)]
+        return predictions, _confidences(self.model, texts)
 
 
 def _confidences(model, texts: list[str]) -> list[float]:
