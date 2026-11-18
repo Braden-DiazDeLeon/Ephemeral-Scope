@@ -7,7 +7,6 @@ from ephemeral_scope.domain.models import ReleaseNoteItem
 from ephemeral_scope.ml.release_note_classifier import (
     KeywordReleaseNoteClassifier,
     ReleaseNoteClassifier,
-    build_features,
 )
 
 
@@ -91,17 +90,6 @@ class TestConfidence:
         category, confidence = keywords.label_with_confidence("Thanks everyone")
         assert category == Category.IRRELEVANT
         assert confidence < 0.2
-
-
-class TestBuildFeatures:
-    def test_section_is_prefixed(self):
-        assert build_features("Fixed it", "Security").startswith("__section_security__")
-
-    def test_multiword_section_is_joined(self):
-        assert "__section_breaking_changes__" in build_features("x", "Breaking Changes")
-
-    def test_no_section_leaves_text_alone(self):
-        assert build_features("Fixed it", None) == "Fixed it"
 
 
 class TestReleaseNoteClassifier:

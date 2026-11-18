@@ -1,0 +1,276 @@
+{
+  "collected_on": "2026-11-17",
+  "code_commit": "0747ba02443f5f998093427a2c40517016390216",
+  "source": "GitHub Releases API",
+  "note": "data/generated/ and models/ are not committed. Rebuild with scripts/build_training_dataset.py --all, then compare the hashes below. Release notes are the upstream projects' own text and are redistributed here only as the verified subsets.",
+  "splits": {
+    "train": {
+      "packages": [
+        {
+          "package": "numpy",
+          "repository": "https://github.com/numpy/numpy",
+          "source_url": "https://api.github.com/repos/numpy/numpy/releases",
+          "releases": 150,
+          "oldest_release": "v1.12.0b1",
+          "newest_release": "v2.5.5"
+        },
+        {
+          "package": "fastapi",
+          "repository": "https://github.com/fastapi/fastapi",
+          "source_url": "https://api.github.com/repos/fastapi/fastapi/releases",
+          "releases": 351,
+          "oldest_release": "0.1.11",
+          "newest_release": "0.163.1"
+        },
+        {
+          "package": "pydantic",
+          "repository": "https://github.com/pydantic/pydantic",
+          "source_url": "https://api.github.com/repos/pydantic/pydantic/releases",
+          "releases": 207,
+          "oldest_release": "v0.0.2",
+          "newest_release": "v2.14.3"
+        },
+        {
+          "package": "black",
+          "repository": "https://github.com/psf/black",
+          "source_url": "https://api.github.com/repos/psf/black/releases",
+          "releases": 57,
+          "oldest_release": "19.3b0",
+          "newest_release": "26.10.1"
+        },
+        {
+          "package": "pandas",
+          "repository": "https://github.com/pandas-dev/pandas",
+          "source_url": "https://api.github.com/repos/pandas-dev/pandas/releases",
+          "releases": 126,
+          "oldest_release": "v0.13.0",
+          "newest_release": "v3.1.1"
+        },
+        {
+          "package": "click",
+          "repository": "https://github.com/pallets/click",
+          "source_url": "https://api.github.com/repos/pallets/click/releases",
+          "releases": 31,
+          "oldest_release": "7.1",
+          "newest_release": "8.5.1"
+        },
+        {
+          "package": "oauthlib",
+          "repository": "https://github.com/oauthlib/oauthlib",
+          "source_url": "https://api.github.com/repos/oauthlib/oauthlib/releases",
+          "releases": 52,
+          "oldest_release": "0.1.4",
+          "newest_release": "v4.0.1"
+        },
+        {
+          "package": "starlette",
+          "repository": "https://github.com/Kludex/starlette",
+          "source_url": "https://api.github.com/repos/Kludex/starlette/releases",
+          "releases": 103,
+          "oldest_release": "0.13.4",
+          "newest_release": "1.10.0"
+        },
+        {
+          "package": "uvicorn",
+          "repository": "https://github.com/Kludex/uvicorn",
+          "source_url": "https://api.github.com/repos/Kludex/uvicorn/releases",
+          "releases": 90,
+          "oldest_release": "0.11.4",
+          "newest_release": "0.54.0"
+        },
+        {
+          "package": "sentry-sdk",
+          "repository": "https://github.com/getsentry/sentry-python",
+          "source_url": "https://api.github.com/repos/getsentry/sentry-python/releases",
+          "releases": 358,
+          "oldest_release": "0.1.0-preview1",
+          "newest_release": "2.75.0"
+        }
+      ],
+      "generated": {
+        "path": "data/generated/train.jsonl",
+        "sha256": "42e29e2c755c90208a4e142f5685ec85c12e89bd02bd154c78d9180c78e0ebb6",
+        "bytes": 6348118,
+        "statements": 17989,
+        "verified": 0,
+        "labels": {
+          "bug_fix": 3661,
+          "feature": 2779,
+          "irrelevant": 2627,
+          "deprecation": 456,
+          "behavioral_change": 381,
+          "breaking_change": 326,
+          "security_fix": 55
+        }
+      },
+      "verified": {
+        "path": "data/verified/train.jsonl",
+        "sha256": "ec209e00918c7f8d7a943952cab2ca301c99a17d6d8eb81554f55dc859ca11d3",
+        "bytes": 139207,
+        "statements": 415,
+        "verified": 0,
+        "labels": {
+          "breaking_change": 60,
+          "feature": 60,
+          "behavioral_change": 60,
+          "bug_fix": 60,
+          "irrelevant": 60,
+          "deprecation": 60,
+          "security_fix": 55
+        }
+      }
+    },
+    "validation": {
+      "packages": [
+        {
+          "package": "pytest",
+          "repository": "https://github.com/pytest-dev/pytest",
+          "source_url": "https://api.github.com/repos/pytest-dev/pytest/releases",
+          "releases": 85,
+          "oldest_release": "5.0.1",
+          "newest_release": "9.2.0"
+        },
+        {
+          "package": "pyjwt",
+          "repository": "https://github.com/jpadilla/pyjwt",
+          "source_url": "https://api.github.com/repos/jpadilla/pyjwt/releases",
+          "releases": 46,
+          "oldest_release": "0.2.0",
+          "newest_release": "2.15.1"
+        },
+        {
+          "package": "flask",
+          "repository": "https://github.com/pallets/flask",
+          "source_url": "https://api.github.com/repos/pallets/flask/releases",
+          "releases": 38,
+          "oldest_release": "0.12.3",
+          "newest_release": "3.1.3"
+        },
+        {
+          "package": "jinja2",
+          "repository": "https://github.com/pallets/jinja",
+          "source_url": "https://api.github.com/repos/pallets/jinja/releases",
+          "releases": 21,
+          "oldest_release": "2.10",
+          "newest_release": "3.1.6"
+        }
+      ],
+      "generated": {
+        "path": "data/generated/validation.jsonl",
+        "sha256": "40cbe22536a3ab842a706b642479dad9e6ce873cb1a94acf7f1b233f4c3b9c0c",
+        "bytes": 723799,
+        "statements": 2095,
+        "verified": 0,
+        "labels": {
+          "bug_fix": 616,
+          "feature": 511,
+          "deprecation": 124,
+          "irrelevant": 124,
+          "breaking_change": 114,
+          "behavioral_change": 114,
+          "security_fix": 27
+        }
+      },
+      "verified": {
+        "path": "data/verified/validation.jsonl",
+        "sha256": "9e3c9c614f45aadcc12c6b2d077c2bfd4ed553e53ff9e29d2cabab3e9c8dd509",
+        "bytes": 132816,
+        "statements": 387,
+        "verified": 0,
+        "labels": {
+          "bug_fix": 60,
+          "deprecation": 60,
+          "irrelevant": 60,
+          "breaking_change": 60,
+          "behavioral_change": 60,
+          "feature": 60,
+          "security_fix": 27
+        }
+      }
+    },
+    "test": {
+      "packages": [
+        {
+          "package": "urllib3",
+          "repository": "https://github.com/urllib3/urllib3",
+          "source_url": "https://api.github.com/repos/urllib3/urllib3/releases",
+          "releases": 59,
+          "oldest_release": "1.25",
+          "newest_release": "2.8.0"
+        },
+        {
+          "package": "werkzeug",
+          "repository": "https://github.com/pallets/werkzeug",
+          "source_url": "https://api.github.com/repos/pallets/werkzeug/releases",
+          "releases": 55,
+          "oldest_release": "0.13",
+          "newest_release": "3.1.9"
+        },
+        {
+          "package": "attrs",
+          "repository": "https://github.com/python-attrs/attrs",
+          "source_url": "https://api.github.com/repos/python-attrs/attrs/releases",
+          "releases": 27,
+          "oldest_release": "17.3.0.post1",
+          "newest_release": "26.1.0"
+        },
+        {
+          "package": "rich",
+          "repository": "https://github.com/Textualize/rich",
+          "source_url": "https://api.github.com/repos/Textualize/rich/releases",
+          "releases": 177,
+          "oldest_release": "v0.3.2",
+          "newest_release": "v15.0.0"
+        }
+      ],
+      "generated": {
+        "path": "data/generated/test.jsonl",
+        "sha256": "2f050d2d9c81392a14e79e15ad4d3e39f378df1034aec8d519433a2a37eeccab",
+        "bytes": 534242,
+        "statements": 1682,
+        "verified": 0,
+        "labels": {
+          "behavioral_change": 452,
+          "bug_fix": 390,
+          "feature": 298,
+          "deprecation": 69,
+          "breaking_change": 68,
+          "security_fix": 39,
+          "irrelevant": 38
+        }
+      },
+      "verified": {
+        "path": "data/verified/test.jsonl",
+        "sha256": "c0fb9ffe35c11da80e11843e6d3b0447f5bb6d936f40a77f57220d31a0b51652",
+        "bytes": 123419,
+        "statements": 377,
+        "verified": 0,
+        "labels": {
+          "deprecation": 60,
+          "bug_fix": 60,
+          "breaking_change": 60,
+          "feature": 60,
+          "behavioral_change": 60,
+          "security_fix": 39,
+          "irrelevant": 38
+        }
+      }
+    }
+  },
+  "case_studies": [
+    {
+      "path": "data/case_studies/requests.jsonl",
+      "sha256": "804fe925ee0bf758f6f4192fb4a2ef16916c4244dc6e2a10db28e97868f19ace",
+      "bytes": 29420,
+      "statements": 85,
+      "verified": 0,
+      "labels": {
+        "bug_fix": 31,
+        "feature": 19,
+        "deprecation": 14,
+        "security_fix": 9,
+        "irrelevant": 9
+      }
+    }
+  ]
+}

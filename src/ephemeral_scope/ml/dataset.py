@@ -22,6 +22,27 @@ NOISE_SECTIONS = frozenset({"new contributors", "contributors", "acknowledgement
 
 _FIRST_CONTRIBUTION = re.compile(r"@[\w-]+ made their first contribution", re.I)
 _VERSION_ONLY = re.compile(r"^v?\d+(\.\d+)*[a-z0-9.\-]*$", re.I)
+_URL = re.compile(r"https?://\S+")
+#: "Released on 2026-11-15.", "2024-05-20", "Release date: ..."
+_RELEASE_DATE = re.compile(
+    r"^(?:released?(?:\s+on)?|release date|published)?\s*:?\s*"
+    r"\d{4}-\d{2}-\d{2}\.?$",
+    re.I,
+)
+#: "Compare: v1.2.0...v1.3.0", "Full diff", bare tag references.
+_BARE_REFERENCE = re.compile(
+    r"^(?:compare|diff|full diff|changelog|release notes|docs?|documentation|"
+    r"pypi|milestone|commits?)\s*:?\s*$",
+    re.I,
+)
+#: Promotional and social chatter: sponsor pledges, follow-us lines, thanks.
+_PROMOTIONAL = re.compile(
+    r"\b(follow (?:us|me) on|star (?:us|the repo)|sponsor\w*|donate|patreon|"
+    r"twitter\.com|x\.com/|mastodon|discord\.gg|join our|subscribe|"
+    r"thanks? (?:to )?(?:all|everyone|our)|shout-?out)\b",
+    re.I,
+)
+_LABELLED_LINK = re.compile(r"^[\w .#/-]{0,40}:\s*https?://\S+$", re.I)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,13 +92,44 @@ class LabeledNote:
 
 
 def is_noise(item: ReleaseNoteItem) -> bool:
-    """True for statements that carry no information about an upgrade."""
+    """True for pure metadata that says nothing about an upgrade.
+
+    The bar is deliberately narrow. A real maintenance or documentation
+    claim is kept and labelled IRRELEVANT, because the classifier needs
+    negative examples; only statements with no upgrade meaning at all,
+    release dates, link dumps, contributor chatter, are discarded.
+    """
     if item.section and item.section.strip().lower() in NOISE_SECTIONS:
         return True
-    text = item.text.strip()
-    if len(text) < 12 or _VERSION_ONLY.match(text):
+
+    text = " ".join(item.text.split())
+    if len(text) < 12:
         return True
-    return bool(_FIRST_CONTRIBUTION.search(text))
+    if _VERSION_ONLY.match(text) or _RELEASE_DATE.match(text):
+        return True
+    if _BARE_REFERENCE.match(text) or _LABELLED_LINK.match(text):
+        return True
+    if _FIRST_CONTRIBUTION.search(text) or _PROMOTIONAL.search(text):
+        return True
+
+    # Link collections: once URLs are stripped there is no claim left.
+    without_links = _URL.sub("", text)
+    if len(_strip_decoration(without_links)) < 12:
+        return True
+
+    # A statement needs a verb-bearing clause; a bare noun phrase such as
+    # "PyPI" or "Milestone 3" is a reference, not a claim.
+    return len(text.split()) < 3
+
+
+def _strip_decoration(text: str) -> str:
+    """Remove punctuation and emphasis so link-only lines collapse to empty."""
+    return re.sub(r"[^\w\s]", "", text).strip()
+
+
+def normalized_text(text: str) -> str:
+    """Canonical form used for duplicate detection across packages and splits."""
+    return " ".join(text.casefold().split())
 
 
 def normalize(items: Iterable[ReleaseNoteItem]) -> list[ReleaseNoteItem]:
@@ -92,7 +144,7 @@ def normalize(items: Iterable[ReleaseNoteItem]) -> list[ReleaseNoteItem]:
         if is_noise(item):
             continue
         cleaned = " ".join(item.text.split())
-        key = (item.package_name, cleaned.lower())
+        key = (item.package_name, normalized_text(cleaned))
         if key in seen:
             continue
         seen.add(key)

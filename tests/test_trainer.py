@@ -11,6 +11,7 @@ from ephemeral_scope.ml.release_note_classifier import ReleaseNoteClassifier
 from ephemeral_scope.ml.trainer import (
     LeakageError,
     check_splits,
+    deduplicate_across,
     evaluate,
     label_distribution,
     save_model,
@@ -59,8 +60,8 @@ class TestCheckSplits:
     def test_disjoint_packages_pass(self):
         check_splits(
             {
-                "train": [note("x y z", Category.FEATURE, "numpy")],
-                "test": [note("x y z", Category.FEATURE, "flask")],
+                "train": [note("Added a timeout option.", Category.FEATURE, "numpy")],
+                "test": [note("Added a retry option.", Category.FEATURE, "flask")],
             }
         )
 
@@ -68,17 +69,77 @@ class TestCheckSplits:
         with pytest.raises(LeakageError, match="numpy"):
             check_splits(
                 {
-                    "train": [note("x y z", Category.FEATURE, "numpy")],
-                    "test": [note("a b c", Category.FEATURE, "numpy")],
+                    "train": [note("Added a timeout option.", Category.FEATURE, "numpy")],
+                    "test": [note("Added a retry option.", Category.FEATURE, "numpy")],
                 }
             )
 
     def test_held_out_package_in_training_is_rejected(self):
         with pytest.raises(LeakageError, match="requests"):
-            check_splits({"train": [note("x y z", Category.FEATURE, "requests")]})
+            check_splits(
+                {"train": [note("Added an option.", Category.FEATURE, "requests")]}
+            )
 
     def test_held_out_package_is_allowed_elsewhere(self):
-        check_splits({"test": [note("x y z", Category.FEATURE, "requests")]})
+        check_splits({"test": [note("Added an option.", Category.FEATURE, "requests")]})
+
+    def test_duplicate_text_across_splits_is_rejected(self):
+        """Boilerplate gets copied between projects, crossing splits."""
+        shared = "See the upgrade guide before installing this release."
+        with pytest.raises(LeakageError, match="duplicate statements"):
+            check_splits(
+                {
+                    "validation": [note(shared, Category.IRRELEVANT, "click")],
+                    "test": [note(shared, Category.IRRELEVANT, "flask")],
+                }
+            )
+
+    def test_duplicate_detection_ignores_case_and_spacing(self):
+        with pytest.raises(LeakageError, match="duplicate statements"):
+            check_splits(
+                {
+                    "validation": [note("Upgrade the parser now.", Category.FEATURE, "click")],
+                    "test": [note("UPGRADE   the  parser now.", Category.FEATURE, "flask")],
+                }
+            )
+
+    def test_distinct_text_passes(self):
+        check_splits(
+            {
+                "validation": [note("Added a timeout option.", Category.FEATURE, "click")],
+                "test": [note("Removed the legacy parser.", Category.BREAKING_CHANGE, "flask")],
+            }
+        )
+
+
+class TestDeduplicateAcross:
+    def test_removes_the_duplicate_from_the_lower_priority_split(self):
+        shared = "See the upgrade guide before installing."
+        splits = {
+            "train": [note(shared, Category.IRRELEVANT, "numpy")],
+            "test": [note(shared, Category.IRRELEVANT, "flask")],
+        }
+        result = deduplicate_across(splits, priority=["test", "validation", "train"])
+        assert len(result["test"]) == 1
+        assert result["train"] == []
+
+    def test_output_passes_the_split_check(self):
+        shared = "See the upgrade guide before installing."
+        splits = {
+            "train": [note(shared, Category.IRRELEVANT, "numpy")],
+            "test": [
+                note(shared, Category.IRRELEVANT, "flask"),
+                note("Removed the legacy parser.", Category.BREAKING_CHANGE, "flask"),
+            ],
+        }
+        check_splits(deduplicate_across(splits, priority=["test", "train"]))
+
+    def test_preserves_split_order(self):
+        splits = {
+            "train": [note("Added an option.", Category.FEATURE, "numpy")],
+            "test": [note("Removed a thing.", Category.BREAKING_CHANGE, "flask")],
+        }
+        assert list(deduplicate_across(splits).keys()) == ["train", "test"]
 
 
 class TestToXy:
@@ -90,12 +151,14 @@ class TestToXy:
         features, labels = to_xy(notes)
         assert len(features) == 1 and labels == ["bug_fix"]
 
-    def test_section_is_folded_into_the_features(self):
+    def test_section_is_withheld_from_the_model(self):
+        """Labels are derived from the section, so feeding it back leaks."""
         labelled = LabeledNote(
             "Fixed it", "p", "1", None, "Security", None, Category.SECURITY_FIX
         )
         features, _ = to_xy([labelled])
-        assert features[0].startswith("__section_security__")
+        assert features == ["Fixed it"]
+        assert "security" not in features[0].lower()
 
 
 class TestTraining:

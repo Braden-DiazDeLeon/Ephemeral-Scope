@@ -178,7 +178,9 @@ class ReleaseNoteClassifier:
     def _classify_with_model(
         self, notes: Sequence[ReleaseNoteItem]
     ) -> list[ClassifiedChange]:
-        texts = [build_features(note.text, note.section) for note in notes]
+        # Text only. The section heading is withheld from the model on
+        # purpose: see the note on `to_xy` in ml.trainer.
+        texts = [note.text for note in notes]
         predictions = self.model.predict(texts)
         confidences = _confidences(self.model, texts)
         return [
@@ -189,17 +191,6 @@ class ReleaseNoteClassifier:
             )
             for note, prediction, confidence in zip(notes, predictions, confidences)
         ]
-
-
-def build_features(text: str, section: str | None) -> str:
-    """Fold the section heading into the text the vectorizer sees.
-
-    The heading is a strong predictor, and prefixing it keeps the model a
-    single text pipeline rather than requiring a column transformer.
-    """
-    if section:
-        return f"__section_{section.strip().lower().replace(' ', '_')}__ {text}"
-    return text
 
 
 def _confidences(model, texts: list[str]) -> list[float]:

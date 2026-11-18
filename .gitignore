@@ -7,5 +7,15 @@ build/
 .pytest_cache/
 .vscode/
 .cache/
-data/
+
+# Regenerable, and large:
+# scripts/build_training_dataset.py --all rebuilds it and data/manifest.json
+# pins the packages, release ranges and hashes needed to verify the rebuild.
+data/raw/
+data/generated/
 models/
+
+# Committed on purpose, so the experiment can be reproduced:
+#   data/verified/*.jsonl      the balanced subsets carrying human labels
+#   data/case_studies/*.jsonl  the held-out requests corpus
+#   data/manifest.json         provenance for everything ignored above

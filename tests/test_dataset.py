@@ -53,6 +53,42 @@ class TestNoise:
     def test_real_statement_is_kept(self):
         assert not is_noise(item("Removed the deprecated append method."))
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Released on 2026-11-15.",
+            "Release date: 2024-05-20",
+            "2024-05-20",
+            "PyPI: https://pypi.org/project/flask/",
+            "Changes: https://github.com/pallets/flask/compare/2.0...2.1",
+            "https://github.com/pallets/flask/releases/tag/2.1.0",
+            "Compare:",
+            "Changelog",
+            "Follow us on Twitter for updates",
+            "Thanks to everyone who contributed",
+            "Please consider sponsoring this project",
+        ],
+    )
+    def test_pure_metadata_is_discarded(self, text):
+        assert is_noise(item(text))
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Fixed a typo in the documentation for send_file.",
+            "Updated the changelog formatting and CI configuration.",
+            "Bumped the minimum Werkzeug version to 2.3.",
+            "Improved the docstrings on the Blueprint class.",
+        ],
+    )
+    def test_real_maintenance_claims_are_kept(self, text):
+        """These are IRRELEVANT examples, and the model needs negatives."""
+        assert not is_noise(item(text))
+
+    def test_statement_with_a_trailing_link_is_kept(self):
+        text = "Fixed a session verification leak. https://example.test/advisory"
+        assert not is_noise(item(text))
+
 
 class TestNormalize:
     def test_drops_noise(self):
