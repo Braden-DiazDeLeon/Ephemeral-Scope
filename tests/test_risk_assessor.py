@@ -6,6 +6,7 @@ must never make the upgrade look dangerous.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,7 +32,11 @@ from ephemeral_scope.domain.models import (
     VulnerabilityRecord,
 )
 from ephemeral_scope.inference.fact_builder import build_facts
-from ephemeral_scope.inference.risk_assessor import RiskAssessor
+from ephemeral_scope.inference.risk_assessor import (
+    RULE_EXPLANATIONS,
+    RiskAssessor,
+    explain,
+)
 
 RULES = Path(__file__).resolve().parents[1] / "src/ephemeral_scope/inference/rules.pl"
 SWIPL = shutil.which("swipl")
@@ -217,7 +222,7 @@ class TestReasons:
             UPGRADE, affected=[affected("requests.get", ChangeType.REMOVED)]
         )
 
-        assert result.migration_reasons[0].rule_name == "removed_symbol_in_use"
+        assert result.migration_reasons[0].rule_name == "removed_used_api"
         assert result.migration_reasons[0].subject == "requests.get"
 
     def test_only_reasons_at_the_reported_level_are_kept(self, assessor):
@@ -245,7 +250,104 @@ class TestReasons:
 
         assert document["migration_risk"] == "high"
         assert document["upgrade_urgency"] == "low"
-        assert document["migration_reasons"][0]["rule"] == "removed_symbol_in_use"
+        assert document["migration_reasons"][0]["rule"] == "removed_used_api"
+
+
+class TestRuleNames:
+    """Rule names are the contract between rules.pl and the report prose."""
+
+    def prolog_rule_names(self) -> set[str]:
+        """Scrape the rule names from the heads of the two risk predicates."""
+        text = RULES.read_text(encoding="utf-8")
+        pattern = re.compile(
+            r"^(?:migration_risk|upgrade_urgency)\(\s*\w+\s*,\s*(\w+)\s*,",
+            re.MULTILINE,
+        )
+        return set(pattern.findall(text))
+
+    def test_every_prolog_rule_has_an_explanation(self):
+        missing = self.prolog_rule_names() - set(RULE_EXPLANATIONS)
+
+        assert not missing, f"rules.pl defines unexplained rules: {sorted(missing)}"
+
+    def test_no_explanation_describes_a_rule_that_does_not_exist(self):
+        extra = set(RULE_EXPLANATIONS) - self.prolog_rule_names()
+
+        assert not extra, f"explanations for absent rules: {sorted(extra)}"
+
+    def test_every_reason_the_assessor_emits_can_be_explained(self):
+        evidence = EvidenceBundle(
+            current_vulnerabilities=(advisory("GHSA-fixed"), advisory("GHSA-open")),
+            target_vulnerabilities=(advisory("GHSA-open"),),
+        )
+        result = RiskAssessor().assess(
+            UPGRADE,
+            affected=[affected("requests.get", ChangeType.REMOVED)],
+            classified_changes=[note(ReleaseNoteCategory.BREAKING_CHANGE)],
+            evidence=evidence,
+        )
+
+        for reason in (*result.migration_reasons, *result.urgency_reasons):
+            assert explain(reason.rule_name) != reason.rule_name
+
+    def test_explanations_are_prose_not_identifiers(self):
+        for name, text in RULE_EXPLANATIONS.items():
+            assert len(text.split()) > 5, name
+
+
+class TestSignatureChangeIsHigh:
+    """Phase 5 raised these from medium; the grouping is deliberate."""
+
+    @pytest.mark.parametrize(
+        "change_type",
+        [
+            ChangeType.SIGNATURE_CHANGED,
+            ChangeType.PARAMETER_ADDED_REQUIRED,
+            ChangeType.PARAMETER_REMOVED,
+            ChangeType.PARAMETER_RENAMED,
+        ],
+    )
+    def test_incompatible_signature_changes_are_high(self, assessor, change_type):
+        result = assessor.assess(
+            UPGRADE, affected=[affected("requests.get", change_type)]
+        )
+
+        assert result.migration_risk is RiskLevel.HIGH
+        assert result.migration_reasons[0].rule_name == "changed_used_signature"
+
+
+class TestBehaviourNoteThreshold:
+    """Behaviour notes need a stronger match than breaking notes."""
+
+    def test_a_symbol_level_match_qualifies(self, assessor):
+        result = assessor.assess(
+            UPGRADE,
+            classified_changes=[
+                note(ReleaseNoteCategory.BEHAVIORAL_CHANGE, relevance=0.7)
+            ],
+        )
+
+        assert result.migration_risk is RiskLevel.MEDIUM
+
+    def test_a_parameter_level_match_does_not(self, assessor):
+        result = assessor.assess(
+            UPGRADE,
+            classified_changes=[
+                note(ReleaseNoteCategory.BEHAVIORAL_CHANGE, relevance=0.5)
+            ],
+        )
+
+        assert result.migration_risk is RiskLevel.LOW
+
+    def test_a_breaking_note_qualifies_at_the_lower_bar(self, assessor):
+        result = assessor.assess(
+            UPGRADE,
+            classified_changes=[
+                note(ReleaseNoteCategory.BREAKING_CHANGE, relevance=0.5)
+            ],
+        )
+
+        assert result.migration_risk is RiskLevel.MEDIUM
 
 
 @requires_prolog
@@ -280,7 +382,7 @@ class TestPythonAndPrologAgree:
     def ask_prolog(self, tmp_path: Path, base, name: str) -> tuple[str, str]:
         path = base.write(tmp_path / f"{abs(hash(name))}.pl")
         goal = (
-            "migration_risk(M, _), upgrade_urgency(U, _), "
+            "migration_risk_level(M), upgrade_urgency_level(U), "
             "format('~w ~w', [M, U])"
         )
         result = subprocess.run(

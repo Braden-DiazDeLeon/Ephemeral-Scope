@@ -7,14 +7,10 @@ this module runs without a Prolog interpreter installed, which the web
 application cannot assume. ``tests/test_risk_assessor.py`` runs both over
 the same facts and fails if they ever disagree.
 
-The split that matters:
 
-    migration risk     will this upgrade break the project?
-    upgrade urgency    how badly does the project need it regardless?
-
-Vulnerabilities only ever move urgency. An advisory the target version
-fixes is a reason to upgrade, and letting it raise migration risk would
-report a security fix as an incompatibility.
+Only high- and medium-risk rules exist so far, matching ``rules.pl``. An
+analysis where nothing fires reports ``low``, so the missing low-risk rules
+cost explanations rather than correctness.
 """
 
 from __future__ import annotations
@@ -30,23 +26,66 @@ from ephemeral_scope.domain.models import (
     RiskAssessment,
     RiskReason,
 )
-from ephemeral_scope.ml.relevance_matcher import RELEVANCE_THRESHOLD
+
+#: Stable rule names shared with rules.pl, mapped to user-facing prose.
+#: A test asserts this covers exactly the rules the Prolog file defines, so
+#: renaming a rule in one place fails the build rather than silently
+#: producing a finding the report cannot explain.
+RULE_EXPLANATIONS: dict[str, str] = {
+    "removed_used_api": (
+        "Your project calls an API that no longer exists in the target "
+        "version. This will raise AttributeError or ImportError at runtime."
+    ),
+    "changed_used_signature": (
+        "Your project calls an API whose signature changed incompatibly. "
+        "Existing call sites may raise TypeError."
+    ),
+    "relevant_breaking_note": (
+        "The release notes announce a breaking change that mentions code "
+        "your project uses, though no specific call site was identified."
+    ),
+    "relevant_behavior_change": (
+        "The release notes describe a behavioural change closely matching "
+        "code your project uses. The call still works but may do something "
+        "different."
+    ),
+    "fixes_known_vulnerability": (
+        "The version you are on has a published advisory that the target "
+        "version resolves. This is a reason to upgrade, not a risk of "
+        "upgrading."
+    ),
+    "target_remains_vulnerable": (
+        "A published advisory still affects the target version. Upgrading "
+        "does not resolve it; a later version may be required."
+    ),
+    "reported_security_fix": (
+        "The release notes describe a security fix between these versions."
+    ),
+}
+
+#: Thresholds mirroring breaking_note_threshold/1 and
+#: behavior_note_threshold/1 in rules.pl.
+BREAKING_NOTE_THRESHOLD = 0.5
+BEHAVIOR_NOTE_THRESHOLD = 0.7
 
 _RANK = {RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIGH: 3}
 
-#: Change types that break a call site outright when the project uses it.
-BREAKING_IN_USE = {
-    ChangeType.REMOVED: "removed_symbol_in_use",
-    ChangeType.PARAMETER_ADDED_REQUIRED: "incompatible_signature_in_use",
-    ChangeType.PARAMETER_REMOVED: "incompatible_signature_in_use",
-    ChangeType.PARAMETER_RENAMED: "incompatible_signature_in_use",
-}
+#: Change types that break a call site the project actually uses. Grouped
+#: under one rule name because from a caller's point of view they are the
+#: same failure.
+INCOMPATIBLE_SIGNATURE_CHANGES = frozenset(
+    {
+        ChangeType.SIGNATURE_CHANGED,
+        ChangeType.PARAMETER_ADDED_REQUIRED,
+        ChangeType.PARAMETER_REMOVED,
+        ChangeType.PARAMETER_RENAMED,
+    }
+)
 
-#: Change types that alter a used call site without necessarily breaking it.
-BEHAVIOURAL_IN_USE = {
-    ChangeType.SIGNATURE_CHANGED: "signature_changed_in_use",
-    ChangeType.MOVED: "moved_symbol_in_use",
-}
+
+def explain(rule_name: str) -> str:
+    """User-facing prose for a rule name, or the name itself if unmapped."""
+    return RULE_EXPLANATIONS.get(rule_name, rule_name)
 
 
 def _highest(reasons: Sequence[RiskReason]) -> RiskLevel:
@@ -56,14 +95,19 @@ def _highest(reasons: Sequence[RiskReason]) -> RiskLevel:
 
 
 def _at_level(reasons: Sequence[RiskReason], level: RiskLevel) -> tuple[RiskReason, ...]:
-    return tuple(reason for reason in reasons if reason.level is level)
+    seen: dict[tuple[str, str], RiskReason] = {}
+    for reason in reasons:
+        if reason.level is level:
+            seen.setdefault((reason.rule_name, reason.subject), reason)
+    return tuple(seen.values())
+
+
+def _corroborated(change: ClassifiedChange) -> bool:
+    return not (change.decision is not None and change.decision.is_model_only)
 
 
 class RiskAssessor:
     """Derives migration risk and upgrade urgency from analysis results."""
-
-    def __init__(self, relevance_threshold: float = RELEVANCE_THRESHOLD) -> None:
-        self.relevance_threshold = relevance_threshold
 
     def assess(
         self,
@@ -73,7 +117,7 @@ class RiskAssessor:
         evidence: EvidenceBundle | None = None,
     ) -> RiskAssessment:
         migration = self._migration_reasons(affected, classified_changes)
-        urgency = self._urgency_reasons(upgrade, classified_changes, evidence)
+        urgency = self._urgency_reasons(classified_changes, evidence)
 
         migration_level = _highest(migration)
         urgency_level = _highest(urgency)
@@ -95,71 +139,45 @@ class RiskAssessor:
         for item in affected:
             change_type = item.change.change_type
             symbol = item.usage.symbol
-            if change_type in BREAKING_IN_USE:
+            if change_type is ChangeType.REMOVED:
                 reasons.append(
-                    RiskReason(RiskLevel.HIGH, BREAKING_IN_USE[change_type], symbol)
+                    RiskReason(RiskLevel.HIGH, "removed_used_api", symbol)
                 )
-            elif change_type in BEHAVIOURAL_IN_USE:
+            elif change_type in INCOMPATIBLE_SIGNATURE_CHANGES:
+                reasons.append(
+                    RiskReason(RiskLevel.HIGH, "changed_used_signature", symbol)
+                )
+
+        for identifier, change in _identified(classified_changes):
+            if not _corroborated(change):
+                continue
+            if (
+                change.category is ReleaseNoteCategory.BREAKING_CHANGE
+                and change.relevance_score >= BREAKING_NOTE_THRESHOLD
+            ):
+                reasons.append(
+                    RiskReason(RiskLevel.MEDIUM, "relevant_breaking_note", identifier)
+                )
+            elif (
+                change.category is ReleaseNoteCategory.BEHAVIORAL_CHANGE
+                and change.relevance_score >= BEHAVIOR_NOTE_THRESHOLD
+            ):
                 reasons.append(
                     RiskReason(
-                        RiskLevel.MEDIUM, BEHAVIOURAL_IN_USE[change_type], symbol
+                        RiskLevel.MEDIUM, "relevant_behavior_change", identifier
                     )
-                )
-            elif change_type is ChangeType.DEFAULT_CHANGED:
-                reasons.append(
-                    RiskReason(RiskLevel.LOW, "default_changed_in_use", symbol)
-                )
-
-        for index, change in enumerate(classified_changes, start=1):
-            identifier = f"change_{index}"
-            relevant = change.relevance_score >= self.relevance_threshold
-            corroborated = not (
-                change.decision is not None and change.decision.is_model_only
-            )
-
-            if change.category is ReleaseNoteCategory.BREAKING_CHANGE:
-                if relevant and corroborated:
-                    reasons.append(
-                        RiskReason(
-                            RiskLevel.MEDIUM, "breaking_change_reported", identifier
-                        )
-                    )
-            elif change.category is ReleaseNoteCategory.BEHAVIORAL_CHANGE:
-                if relevant and corroborated:
-                    reasons.append(
-                        RiskReason(
-                            RiskLevel.MEDIUM, "behavioral_change_relevant", identifier
-                        )
-                    )
-            elif change.category is ReleaseNoteCategory.DEPRECATION:
-                if relevant:
-                    reasons.append(
-                        RiskReason(RiskLevel.LOW, "deprecation_relevant", identifier)
-                    )
-            elif change.category is ReleaseNoteCategory.BUG_FIX:
-                reasons.append(
-                    RiskReason(RiskLevel.LOW, "bug_fixes_only", identifier)
                 )
 
         return reasons
 
     def _urgency_reasons(
         self,
-        upgrade: DependencyUpgrade,
         classified_changes: Sequence[ClassifiedChange],
         evidence: EvidenceBundle | None,
     ) -> list[RiskReason]:
         reasons: list[RiskReason] = []
 
         if evidence is not None:
-            for record in evidence.target_vulnerabilities:
-                reasons.append(
-                    RiskReason(
-                        RiskLevel.HIGH,
-                        "target_still_vulnerable",
-                        record.vulnerability_id,
-                    )
-                )
             for record in evidence.fixed_by_upgrade:
                 reasons.append(
                     RiskReason(
@@ -168,19 +186,29 @@ class RiskAssessor:
                         record.vulnerability_id,
                     )
                 )
-
-        for index, change in enumerate(classified_changes, start=1):
-            identifier = f"change_{index}"
-            corroborated = not (
-                change.decision is not None and change.decision.is_model_only
-            )
-            if change.category is ReleaseNoteCategory.SECURITY_FIX and corroborated:
+            for record in evidence.target_vulnerabilities:
                 reasons.append(
-                    RiskReason(RiskLevel.MEDIUM, "security_fix_reported", identifier)
+                    RiskReason(
+                        RiskLevel.HIGH,
+                        "target_remains_vulnerable",
+                        record.vulnerability_id,
+                    )
                 )
-            elif change.category is ReleaseNoteCategory.BUG_FIX:
+
+        for identifier, change in _identified(classified_changes):
+            if (
+                change.category is ReleaseNoteCategory.SECURITY_FIX
+                and _corroborated(change)
+            ):
                 reasons.append(
-                    RiskReason(RiskLevel.LOW, "bug_fixes_available", identifier)
+                    RiskReason(RiskLevel.MEDIUM, "reported_security_fix", identifier)
                 )
 
         return reasons
+
+
+def _identified(
+    changes: Sequence[ClassifiedChange],
+) -> list[tuple[str, ClassifiedChange]]:
+    """Pair each change with the identifier fact_builder would give it."""
+    return [(f"change_{index}", change) for index, change in enumerate(changes, 1)]

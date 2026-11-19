@@ -392,7 +392,28 @@ class TestGeneratedFileLoadsInProlog:
         base = build_facts(UPGRADE, affected=[affected])
 
         output = self.consult(
-            tmp_path, base, "migration_risk(L, _), format('~w', [L])"
+            tmp_path, base, "migration_risk_level(L), format('~w', [L])"
         )
 
         assert output.strip() == "high"
+
+    def test_the_rule_name_reaches_the_terminal(self, tmp_path):
+        affected = AffectedUsage(
+            usage=usage("pandas.DataFrame.append"),
+            change=change("pandas.DataFrame.append"),
+        )
+        base = build_facts(UPGRADE, affected=[affected])
+
+        output = self.consult(
+            tmp_path,
+            base,
+            "forall(migration_risk(L, R, S), format('~w ~w ~w~n', [L, R, S]))",
+        )
+
+        assert output.strip() == "high removed_used_api pandas.DataFrame.append"
+
+    def test_report_runs_against_an_empty_analysis(self, tmp_path):
+        output = self.consult(tmp_path, build_facts(UPGRADE), "report")
+
+        assert "migration risk:  low" in output
+        assert "upgrade urgency: low" in output
