@@ -1,8 +1,8 @@
 """Tests for the final report assembly.
 
 Two things here are worth more than the rest: that overall risk is the
-maximum migration finding and nothing else, and that the migration actions
-say something true and specific rather than restating the finding.
+assessment's migration risk and nothing else, and that the migration
+actions say something true and specific rather than restating the finding.
 """
 
 from __future__ import annotations
@@ -30,16 +30,14 @@ from ephemeral_scope.domain.models import (
     DependencyUpgrade,
     EvidenceBundle,
     ReleaseNoteItem,
+    RiskAssessment,
     RiskFinding,
     UpgradeReport,
     VulnerabilityRecord,
 )
 from ephemeral_scope.domain.models import TestReference as CoveringTest
-from ephemeral_scope.reporting.report_builder import (
-    ReportBuilder,
-    migration_actions,
-    overall_risk,
-)
+from ephemeral_scope.inference.prolog_risk_engine import InferenceResult
+from ephemeral_scope.reporting.report_builder import ReportBuilder, migration_actions
 
 requires_prolog = pytest.mark.skipif(
     shutil.which("swipl") is None, reason="SWI-Prolog not installed"
@@ -122,56 +120,58 @@ def builder() -> ReportBuilder:
 
 
 class TestOverallRisk:
-    """HIGH > MEDIUM > LOW > UNKNOWN, over migration findings only."""
+    """overall_risk is the assessment, not a second reading of the findings."""
 
-    def test_the_maximum_finding_wins(self):
-        level = overall_risk(
-            [
-                finding("relevant_behavior_change", RiskLevel.MEDIUM),
-                finding("removed_used_api", RiskLevel.HIGH),
-                finding("relevant_breaking_note", RiskLevel.MEDIUM),
-            ]
+    def test_the_assessment_wins_when_a_finding_disagrees(self, builder):
+        report = builder.build(
+            UPGRADE,
+            api_changes=[
+                ApiChange(symbol="requests.get", change_type=ChangeType.REMOVED)
+            ],
+            inference=InferenceResult(
+                assessment=RiskAssessment(migration_risk=RiskLevel.MEDIUM),
+                findings=(finding("removed_used_api", RiskLevel.HIGH),),
+            ),
         )
 
-        assert level is RiskLevel.HIGH
+        assert report.overall_risk is RiskLevel.MEDIUM
+        assert report.overall_risk == report.assessment.migration_risk
 
-    def test_medium_beats_low(self):
-        level = overall_risk(
-            [
-                finding("relevant_breaking_note", RiskLevel.LOW),
-                finding("relevant_behavior_change", RiskLevel.MEDIUM),
-            ]
+    def test_an_urgency_finding_does_not_raise_migration_risk(self, builder):
+        report = builder.build(
+            UPGRADE,
+            evidence=EvidenceBundle(
+                current_vulnerabilities=(advisory("GHSA-1"),)
+            ),
+            inference=InferenceResult(
+                assessment=RiskAssessment(
+                    migration_risk=RiskLevel.LOW,
+                    upgrade_urgency=RiskLevel.HIGH,
+                ),
+                findings=(finding("fixes_known_vulnerability", RiskLevel.HIGH),),
+            ),
         )
 
-        assert level is RiskLevel.MEDIUM
+        assert report.overall_risk is RiskLevel.LOW
+        assert report.assessment.upgrade_urgency is RiskLevel.HIGH
 
-    def test_unknown_never_outranks_a_derived_level(self):
-        level = overall_risk(
-            [
-                finding("removed_used_api", RiskLevel.UNKNOWN),
-                finding("relevant_breaking_note", RiskLevel.LOW),
-            ]
+    def test_no_input_sets_both_fields_to_unknown(self, builder):
+        """The assessor says low when nothing fired. That is not "we looked"."""
+        report = builder.build(
+            UPGRADE,
+            inference=InferenceResult(
+                assessment=RiskAssessment(migration_risk=RiskLevel.LOW)
+            ),
         )
 
-        assert level is RiskLevel.LOW
+        assert report.overall_risk is RiskLevel.UNKNOWN
+        assert report.assessment.migration_risk is RiskLevel.UNKNOWN
 
-    def test_an_analysis_that_found_nothing_is_low(self):
-        assert overall_risk([], analysed=True) is RiskLevel.LOW
+    def test_a_completed_comparison_that_found_nothing_is_low(self, builder):
+        report = builder.build(UPGRADE, api_compared=True)
 
-    def test_an_analysis_that_could_not_look_is_unknown(self):
-        """"Nothing found" and "nothing checked" are different claims."""
-        assert overall_risk([], analysed=False) is RiskLevel.UNKNOWN
-
-    def test_urgency_findings_do_not_raise_migration_risk(self):
-        """The headline property: a security fix is not an incompatibility."""
-        level = overall_risk(
-            [
-                finding("fixes_known_vulnerability", RiskLevel.HIGH),
-                finding("target_remains_vulnerable", RiskLevel.HIGH),
-            ]
-        )
-
-        assert level is RiskLevel.LOW
+        assert report.overall_risk is RiskLevel.LOW
+        assert report.assessment.migration_risk is RiskLevel.LOW
 
 
 class TestMigrationActions:
@@ -421,6 +421,7 @@ class TestBuiltReport:
         report = self.report(builder)
 
         assert report.overall_risk is RiskLevel.UNKNOWN
+        assert report.assessment.migration_risk is RiskLevel.UNKNOWN
 
     def test_affected_files_are_listed(self, builder):
         report = self.report(

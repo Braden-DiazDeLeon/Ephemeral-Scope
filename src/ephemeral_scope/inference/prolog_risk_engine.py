@@ -30,6 +30,7 @@ from pathlib import Path
 from ephemeral_scope.domain.enums import RiskLevel
 from ephemeral_scope.domain.models import (
     AffectedUsage,
+    AnalysisWarning,
     ApiChange,
     ApiUsage,
     ClassifiedChange,
@@ -91,6 +92,9 @@ class InferenceResult:
     #: "prolog" or "python". Recorded so a report can disclose how it was
     #: derived rather than implying Prolog ran when it did not.
     engine: str = "prolog"
+    #: Why this result is not the Prolog one, when it is not. Empty when
+    #: Prolog ran, or when the caller asked for the Python assessor directly.
+    warnings: tuple[AnalysisWarning, ...] = ()
 
     @property
     def migration_findings(self) -> tuple[RiskFinding, ...]:
@@ -353,6 +357,11 @@ def infer(
         findings=_findings_from_assessment(assessment, facts),
         recommended_tests=_tests_from(affected, test_references),
         engine="python",
+        warnings=(
+            AnalysisWarning(
+                "prolog", "Prolog unavailable; Python fallback used"
+            ),
+        ),
     )
 
 

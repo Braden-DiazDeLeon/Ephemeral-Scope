@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ephemeral_scope.domain.enums import ReleaseNoteCategory, SelectionReason
 from ephemeral_scope.domain.models import (
+    AnalysisWarning,
     ClassificationDecision,
     ClassifiedChange,
     ReleaseNoteItem,
@@ -243,7 +244,14 @@ class ReleaseNoteClassifier:
 
     def __init__(self, model_path: Path | None = None) -> None:
         self.keyword_classifier = KeywordReleaseNoteClassifier()
-        self.model = _load_model(model_path) if model_path else None
+        self.model_path = model_path
+        # No path means the caller asked for the rules alone. A path that
+        # does not load is a failure, and the report should say so instead
+        # of quietly presenting rule output as the hybrid result.
+        self.model: object | None = None
+        self.warning: AnalysisWarning | None = None
+        if model_path is not None:
+            self.model, self.warning = _load_model(model_path)
 
     def classify(self, notes: Sequence[ReleaseNoteItem]) -> list[ClassifiedChange]:
         """Assign a category and confidence to each release note."""
@@ -288,11 +296,11 @@ def _confidences(model, texts: list[str]) -> list[float]:
     return [float(max(row)) for row in predict_proba(texts)]
 
 
-def _load_model(model_path: Path):
+def _load_model(model_path: Path) -> tuple[object | None, AnalysisWarning | None]:
     try:
         import joblib
 
-        return joblib.load(model_path)
+        return joblib.load(model_path), None
     except (ImportError, OSError, ValueError) as exc:
         logger.warning("Falling back to keyword rules; could not load model: %s", exc)
-        return None
+        return None, AnalysisWarning("model", f"TF-IDF model unavailable: {exc}")

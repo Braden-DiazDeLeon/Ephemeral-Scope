@@ -11,19 +11,20 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 
 from packaging.version import InvalidVersion, Version
 
 from ephemeral_scope.domain.enums import ChangeType, ReleaseNoteCategory, RiskLevel
 from ephemeral_scope.domain.models import (
     AffectedUsage,
+    AnalysisWarning,
     ApiChange,
     ApiUsage,
     ClassifiedChange,
     Dependency,
     DependencyUpgrade,
     EvidenceBundle,
-    RiskFinding,
     TestReference,
     UpgradeReport,
     VulnerabilityRecord,
@@ -84,11 +85,19 @@ class ReportBuilder:
         test_references: Sequence[TestReference] = (),
         inference: InferenceResult | None = None,
         declared_dependency: Dependency | None = None,
+        warnings: Sequence[AnalysisWarning] = (),
+        api_compared: bool = False,
     ) -> UpgradeReport:
         """Produce the report.
 
         ``inference`` lets a caller supply findings it already computed;
         otherwise the rules are run here.
+
+        ``overall_risk`` is the assessment's migration risk, not a second
+        calculation over the findings. The two are the same question, and
+        answering it twice let them drift. When nothing was available to
+        reason over, both become UNKNOWN: an empty result from a lookup
+        that never ran is not a low-risk upgrade.
         """
         evidence = evidence or EvidenceBundle()
 
@@ -104,15 +113,24 @@ class ReportBuilder:
                 engine=self.engine,
             )
 
-        overall = overall_risk(
-            inference.findings,
-            analysed=_analysis_had_input(api_changes, classified_changes, evidence),
-        )
+        assessment = inference.assessment
+        if not _analysis_had_input(
+            api_changes,
+            classified_changes,
+            evidence,
+            affected=affected,
+            api_compared=api_compared,
+        ):
+            assessment = replace(
+                assessment,
+                migration_risk=RiskLevel.UNKNOWN,
+                migration_reasons=(),
+            )
 
         return UpgradeReport(
             upgrade=upgrade,
-            overall_risk=overall,
-            assessment=inference.assessment,
+            overall_risk=assessment.migration_risk,
+            assessment=assessment,
             usages=tuple(usages),
             api_changes=tuple(api_changes),
             affected_usages=tuple(affected),
@@ -130,48 +148,30 @@ class ReportBuilder:
                 test_references=test_references,
             ),
             inference_engine=inference.engine,
+            warnings=_merge_warnings(evidence.warnings, inference.warnings, warnings),
         )
-
-
-def overall_risk(findings: Iterable[RiskFinding], analysed: bool = True) -> RiskLevel:
-    """The most severe migration finding: HIGH > MEDIUM > LOW > UNKNOWN.
-
-    Only migration findings count. Urgency findings describe why the
-    upgrade is worth doing, and letting them raise the overall risk would
-    report a security fix as a hazard.
-
-    ``analysed`` is False when no stage produced anything to reason over --
-    no API comparison, no release notes, no advisories. That is reported as
-    UNKNOWN rather than LOW, because "we found no problems" and "we were
-    unable to look" are different claims and only one of them is reassuring.
-    """
-    levels = [
-        finding.risk_level
-        for finding in findings
-        if finding.rule_name in _MIGRATION_RULES
-    ]
-    if levels:
-        return RiskLevel.highest(levels)
-    return RiskLevel.LOW if analysed else RiskLevel.UNKNOWN
-
-
-_MIGRATION_RULES = frozenset(
-    {
-        "removed_used_api",
-        "changed_used_signature",
-        "relevant_breaking_note",
-        "relevant_behavior_change",
-    }
-)
 
 
 def _analysis_had_input(
     api_changes: Sequence[ApiChange],
     classified_changes: Sequence[ClassifiedChange],
     evidence: EvidenceBundle,
+    affected: Sequence[AffectedUsage] = (),
+    api_compared: bool = False,
 ) -> bool:
+    """Whether any stage produced something the risk rules could use.
+
+    A completed API comparison counts even when it found no changes: that
+    is "nothing broke", which is low risk. ``api_compared`` is false when
+    the comparison never ran or a snapshot was unusable, and an empty
+    change list then means "we could not look". Affected usages count on
+    their own, because they are the comparison's result.
+    """
+    if api_compared:
+        return True
     return bool(
         api_changes
+        or affected
         or classified_changes
         or evidence.release_notes
         or evidence.current_vulnerabilities
@@ -412,6 +412,14 @@ def _join(items: Sequence[str]) -> str:
     return ", ".join(items[:-1]) + f" and {items[-1]}"
 
 
+def _merge_warnings(*groups: Sequence[AnalysisWarning]) -> tuple[AnalysisWarning, ...]:
+    seen: dict[tuple[str, str], AnalysisWarning] = {}
+    for group in groups:
+        for warning in group:
+            seen.setdefault((warning.component, warning.message), warning)
+    return tuple(seen.values())
+
+
 def _dedupe(actions: Iterable[str]) -> tuple[str, ...]:
     seen: dict[str, None] = {}
     for action in actions:
@@ -419,4 +427,4 @@ def _dedupe(actions: Iterable[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-__all__ = ["BREAKING_CHANGES", "ReportBuilder", "migration_actions", "overall_risk"]
+__all__ = ["BREAKING_CHANGES", "ReportBuilder", "migration_actions"]

@@ -11,7 +11,8 @@ from ephemeral_scope.domain.enums import UsageKind
 def analyze(tmp_path: Path, source: str, package: str = "requests"):
     file = tmp_path / "client.py"
     file.write_text(source)
-    return AstUsageAnalyzer().analyze_file(file, package)
+    usages, _warning = AstUsageAnalyzer().analyze_file(file, package)
+    return usages
 
 
 def test_plain_import(tmp_path: Path):

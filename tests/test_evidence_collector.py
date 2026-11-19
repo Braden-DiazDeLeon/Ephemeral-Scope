@@ -100,3 +100,33 @@ def test_everything_down_yields_an_empty_bundle():
     bundle = collector.collect(UPGRADE)
     assert bundle.release_notes == ()
     assert bundle.vulnerabilities == ()
+
+
+def test_a_failed_lookup_is_a_warning_and_an_empty_answer_is_not():
+    """No advisories and an OSV outage must not look the same."""
+    quiet = EvidenceCollector(FakeNotes(), FakeOsv()).collect(UPGRADE)
+    down = EvidenceCollector(
+        FakeNotes(error=RuntimeError("github down")),
+        FakeOsv(error=RuntimeError("osv down")),
+    ).collect(UPGRADE)
+
+    assert quiet.vulnerabilities == ()
+    assert quiet.release_notes == ()
+    assert quiet.warnings == ()
+
+    assert down.vulnerabilities == ()
+    assert down.release_notes == ()
+    messages = [warning.message for warning in down.warnings]
+    assert any(message.startswith("Release notes unavailable") for message in messages)
+    assert any("OSV current-version query failed" in message for message in messages)
+    assert any("OSV target-version query failed" in message for message in messages)
+
+
+def test_one_failed_source_does_not_warn_about_the_other():
+    bundle = EvidenceCollector(
+        FakeNotes([note("Removed the old API.")]),
+        FakeOsv(error=RuntimeError("osv down")),
+    ).collect(UPGRADE)
+
+    assert [warning.component for warning in bundle.warnings] == ["osv", "osv"]
+    assert bundle.release_notes

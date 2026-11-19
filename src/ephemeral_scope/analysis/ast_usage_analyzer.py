@@ -6,32 +6,49 @@ import ast
 from pathlib import Path
 
 from ephemeral_scope.domain.enums import UsageKind
-from ephemeral_scope.domain.models import ApiUsage, ProjectManifest
+from ephemeral_scope.domain.models import AnalysisWarning, ApiUsage, ProjectManifest
 
 
 class AstUsageAnalyzer:
     """AST nodes to find imports, calls, attributes, and inheritance"""
 
+    def __init__(self) -> None:
+        #: Files skipped on the most recent ``analyze`` call. A skipped file
+        #: contributes no usages, which is indistinguishable from a file that
+        #: does not use the package unless this is reported.
+        self.warnings: tuple[AnalysisWarning, ...] = ()
+
     def analyze(self, manifest: ProjectManifest, package_name: str) -> list[ApiUsage]:
         """Collect every usage of ``package_name`` across the projects Python files"""
+        self.warnings = ()
         usages: list[ApiUsage] = []
+        warnings: list[AnalysisWarning] = []
         for file in manifest.source_files + manifest.test_files:
-            usages.extend(self.analyze_file(file, package_name))
+            found, warning = self.analyze_file(file, package_name)
+            usages.extend(found)
+            if warning is not None:
+                warnings.append(warning)
+        self.warnings = tuple(warnings)
         return usages
 
-    def analyze_file(self, file: Path, package_name: str) -> list[ApiUsage]:
+    def analyze_file(
+        self, file: Path, package_name: str
+    ) -> tuple[list[ApiUsage], AnalysisWarning | None]:
         """Collect usages of ``package_name`` in a single file.
 
-        files that cant be parsed are skipped
+        A file that cannot be parsed contributes a warning rather than
+        silently disappearing from the analysis.
         """
         try:
             tree = ast.parse(Path(file).read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError, OSError):
-            return []
+        except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+            return [], AnalysisWarning(
+                "parser", f"Source file could not be parsed: {file} ({exc.__class__.__name__})"
+            )
 
         visitor = _UsageVisitor(package_name=package_name, file=Path(file))
         visitor.visit(tree)
-        return visitor.usages
+        return visitor.usages, None
 
 
 class _UsageVisitor(ast.NodeVisitor):

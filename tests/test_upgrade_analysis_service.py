@@ -258,6 +258,8 @@ def test_a_missing_prolog_still_returns_the_report(tmp_path: Path):
 
     assert report.inference_engine == "python"
     assert report.overall_risk.value == "high"
+    assert report.overall_risk == report.assessment.migration_risk
+    assert any(warning.component == "prolog" for warning in report.warnings)
     assert any(f.rule_name == "removed_used_api" for f in report.findings)
 
 
@@ -445,3 +447,125 @@ def test_an_undeclared_package_warns_but_is_still_analyzed(tmp_path, caplog):
     assert report.declared_dependency is None
     assert "not declared" in caplog.text
     assert any(f.rule_name == "removed_used_api" for f in report.findings)
+
+
+def test_overall_risk_matches_migration_risk(tmp_path: Path):
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=_full_project(tmp_path),
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert report.overall_risk == report.assessment.migration_risk
+    assert report.overall_risk.value == "high"
+
+
+def test_an_unchanged_api_is_low_risk(tmp_path: Path):
+    """A comparison that ran and found nothing is not an unknown risk."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "client.py").write_text("import pandas as pd\npd.DataFrame()\n")
+    (root / "requirements.txt").write_text("pandas==1.5.3\n")
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME,), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=root,
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert not any(warning.component == "api_snapshot" for warning in report.warnings)
+    assert report.overall_risk.value == "low"
+    assert report.assessment.migration_risk.value == "low"
+
+
+def test_an_incomplete_snapshot_is_a_warning_not_a_removal(tmp_path: Path):
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder({"1.5.3": (), "2.0.0": (DATAFRAME,)}),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=_full_project(tmp_path),
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert any(warning.component == "api_snapshot" for warning in report.warnings)
+    assert all(f.rule_name != "removed_used_api" for f in report.findings)
+    assert report.overall_risk.value == "unknown"
+    assert report.assessment.migration_risk.value == "unknown"
+
+
+def test_an_unparseable_source_file_is_reported(tmp_path: Path):
+    root = _full_project(tmp_path)
+    (root / "src" / "broken.py").write_text("def (\n")
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=root,
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert any(
+        warning.component == "parser" and "broken.py" in warning.message
+        for warning in report.warnings
+    )
+    assert any(f.rule_name == "removed_used_api" for f in report.findings)
+
+
+def test_a_missing_model_file_is_a_warning(tmp_path: Path):
+    from ephemeral_scope.ml.release_note_classifier import ReleaseNoteClassifier
+
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME,), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+        release_note_classifier=ReleaseNoteClassifier(
+            model_path=tmp_path / "missing.joblib"
+        ),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=_full_project(tmp_path),
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert any(
+        warning.message.startswith("TF-IDF model unavailable")
+        for warning in report.warnings
+    )

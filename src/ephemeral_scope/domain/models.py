@@ -241,6 +241,19 @@ class ClassifiedChange:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisWarning:
+    """A source the analysis could not consult.
+
+    An empty result and a failed lookup look the same unless the failure is
+    recorded. "OSV returned no advisories" and "OSV could not be reached"
+    are different claims, and only one of them is reassuring.
+    """
+
+    component: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceBundle:
     release_notes: tuple[ReleaseNoteItem, ...] = ()
     #: Every advisory touching either version, deduplicated by id.
@@ -249,6 +262,9 @@ class EvidenceBundle:
     current_vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
     #: Advisories still affecting the version it would move to.
     target_vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
+    #: Lookups that failed. Empty means each source answered, even if the
+    #: answer was "nothing".
+    warnings: tuple[AnalysisWarning, ...] = ()
 
     @property
     def fixed_by_upgrade(self) -> tuple[VulnerabilityRecord, ...]:
@@ -359,6 +375,8 @@ class UpgradeReport:
     #: lists it. ``None`` when it is absent, which is a warning rather than
     #: a rejection: the package may be transitive or installed dynamically.
     declared_dependency: Dependency | None = None
+    #: Sources that could not be consulted. Distinct from an empty result.
+    warnings: tuple[AnalysisWarning, ...] = ()
 
     @property
     def classifier_disagreements(self) -> tuple[ClassifiedChange, ...]:

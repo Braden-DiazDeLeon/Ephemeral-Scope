@@ -15,6 +15,7 @@ from ephemeral_scope.analysis.usage_change_matcher import UsageChangeMatcher
 from ephemeral_scope.domain.models import (
     AffectedUsage,
     AnalysisRequest,
+    AnalysisWarning,
     ApiChange,
     ApiUsage,
     ClassifiedChange,
@@ -88,6 +89,7 @@ class UpgradeAnalysisService:
         self.fact_builder_factory = fact_builder or FactBuilder
         self.risk_engine = risk_engine or PrologRiskEngine()
         self.report_builder = report_builder or ReportBuilder(engine=self.risk_engine)
+        self.snapshot_warnings: tuple[AnalysisWarning, ...] = ()
 
     def analyze(self, request: AnalysisRequest) -> UpgradeReport:
         """Run the whole pipeline and return the report.
@@ -119,6 +121,7 @@ class UpgradeAnalysisService:
         )
         evidence = self.evidence_collector.collect(upgrade)
         classified = self.release_note_classifier.classify(evidence.release_notes)
+        warnings = self._warnings()
         classified = self._score_relevance(
             classified, usages, affected_changes, upgrade
         )
@@ -140,7 +143,19 @@ class UpgradeAnalysisService:
             test_references=references,
             inference=inference,
             declared_dependency=declared,
+            warnings=warnings,
+            api_compared=not self.snapshot_warnings,
         )
+
+    def _warnings(self) -> tuple[AnalysisWarning, ...]:
+        """Failures from the stages that swallow errors instead of raising."""
+        found: list[AnalysisWarning] = []
+        found.extend(getattr(self.usage_analyzer, "warnings", ()))
+        found.extend(self.snapshot_warnings)
+        model_warning = getattr(self.release_note_classifier, "warning", None)
+        if model_warning is not None:
+            found.append(model_warning)
+        return tuple(found)
 
     def _declared_dependency(
         self, manifest: ProjectManifest, package_name: str
@@ -180,11 +195,43 @@ class UpgradeAnalysisService:
         return self.project_loader.load_directory(path)
 
     def compare_versions(self, request: AnalysisRequest) -> list[ApiChange]:
-        old = self.snapshot_builder.build(
+        """Diff the two versions, or report nothing when a snapshot is unusable.
+
+        An empty or failed snapshot is not a package with no API. Diffing it
+        against a real one would report every symbol as removed. The failure
+        is recorded on ``snapshot_warnings`` and the comparison is skipped.
+        """
+        old, old_warning = self._snapshot(
             request.package_name, request.current_version
         )
-        new = self.snapshot_builder.build(request.package_name, request.target_version)
+        new, new_warning = self._snapshot(
+            request.package_name, request.target_version
+        )
+        self.snapshot_warnings = tuple(
+            warning for warning in (old_warning, new_warning) if warning is not None
+        )
+        if self.snapshot_warnings:
+            return []
         return self.comparator.compare(old, new)
+
+    def _snapshot(
+        self, package_name: str, version: str
+    ) -> tuple[object, AnalysisWarning | None]:
+        try:
+            snapshot = self.snapshot_builder.build(package_name, version)
+        except Exception as exc:
+            logger.exception("API snapshot failed for %s==%s", package_name, version)
+            return None, AnalysisWarning(
+                "api_snapshot",
+                f"Package API snapshot incomplete for {package_name}=={version}: {exc}",
+            )
+        if not getattr(snapshot, "symbols", ()):
+            return snapshot, AnalysisWarning(
+                "api_snapshot",
+                f"Package API snapshot incomplete for {package_name}=={version}: "
+                "no public symbols were found",
+            )
+        return snapshot, None
 
     def _score_relevance(
         self,
