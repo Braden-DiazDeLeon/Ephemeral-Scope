@@ -10,6 +10,10 @@ Run manually. The web application never invokes this.
         --validation data/validation.jsonl \
         --test data/test.jsonl \
         --out models/release_note_classifier.joblib
+
+A source checkout loads models/release_note_classifier.joblib. An installed
+wheel loads the copy at src/ephemeral_scope/ml/release_note_classifier.joblib,
+so replace that file too after retraining.
 """
 
 from __future__ import annotations

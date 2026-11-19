@@ -1,6 +1,7 @@
 """Tests for the cached HTTP layer."""
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -101,4 +102,37 @@ def test_cache_can_be_disabled(monkeypatch):
 def test_no_temporary_files_remain(cache, monkeypatch, tmp_path: Path):
     stub(cache, monkeypatch, {"value": 1}, [])
     cache.get_json("https://example.test/a")
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_concurrent_stores_use_distinct_temporary_files(cache, tmp_path: Path):
+    """A shared .tmp name lets one writer truncate the other's file."""
+    path = tmp_path / "entry.json"
+    names: list[str] = []
+    original = Path.replace
+
+    def record(self: Path, target: Path) -> Path:
+        names.append(self.name)
+        return original(self, target)
+
+    monkey_names = names
+
+    def store(value: int) -> None:
+        cache._store(path, {"value": value})
+
+    # Record the temporary name by wrapping replace on the instance class.
+    Path.replace = record  # type: ignore[method-assign]
+    try:
+        threads = [threading.Thread(target=store, args=(i,)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+    finally:
+        Path.replace = original  # type: ignore[method-assign]
+
+    assert len(monkey_names) == 2
+    assert len(set(monkey_names)) == 2
+    assert all(name != "entry.tmp" for name in monkey_names)
+    assert json.loads(path.read_text(encoding="utf-8"))["value"] in {0, 1}
     assert list(tmp_path.glob("*.tmp")) == []

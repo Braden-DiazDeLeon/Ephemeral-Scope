@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import ssl
+import tempfile
 import urllib.error
 import urllib.request
 from functools import cache
@@ -120,11 +122,29 @@ class HttpCache:
         return self.cache_dir / f"{digest.hexdigest()}.json"
 
     def _store(self, path: Path, document: Any) -> None:
+        """Write ``document`` and replace ``path`` only after the write finishes.
+
+        The temporary name is unique. Two requests caching the same URL each
+        get their own file, then ``replace`` swaps the finished one into
+        place. A shared ``.tmp`` name let one request truncate the file the
+        other was still writing.
+        """
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Write then rename so a crash cannot leave a half-written entry.
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(document), encoding="utf-8")
+            descriptor, name = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+            )
+        except OSError as exc:
+            logger.warning("Could not cache %s: %s", path, exc)
+            return
+
+        temporary = Path(name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(document, handle)
             temporary.replace(path)
         except OSError as exc:
+            temporary.unlink(missing_ok=True)
             logger.warning("Could not cache %s: %s", path, exc)
