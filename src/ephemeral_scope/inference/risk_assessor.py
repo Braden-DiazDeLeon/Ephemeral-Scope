@@ -68,7 +68,6 @@ RULE_EXPLANATIONS: dict[str, str] = {
 BREAKING_NOTE_THRESHOLD = 0.5
 BEHAVIOR_NOTE_THRESHOLD = 0.7
 
-_RANK = {RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIGH: 3}
 
 #: Change types that break a call site the project actually uses. Grouped
 #: under one rule name because from a caller's point of view they are the
@@ -89,9 +88,7 @@ def explain(rule_name: str) -> str:
 
 
 def _highest(reasons: Sequence[RiskReason]) -> RiskLevel:
-    if not reasons:
-        return RiskLevel.LOW
-    return max((reason.level for reason in reasons), key=lambda level: _RANK[level])
+    return RiskLevel.highest(reason.level for reason in reasons)
 
 
 def _at_level(reasons: Sequence[RiskReason], level: RiskLevel) -> tuple[RiskReason, ...]:

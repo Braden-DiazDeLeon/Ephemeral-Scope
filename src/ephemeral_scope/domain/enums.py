@@ -1,5 +1,6 @@
 """Domain enumerations."""
 
+from collections.abc import Iterable
 from enum import StrEnum
 
 
@@ -51,6 +52,42 @@ class RiskLevel(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+    @property
+    def rank(self) -> int:
+        """Severity order: HIGH > MEDIUM > LOW > UNKNOWN.
+
+        UNKNOWN sits at the bottom because it means the analysis could not
+        reach a conclusion, so it must never outrank a level that was
+        actually derived from evidence.
+        """
+        return _RISK_ORDER[self]
+
+    @classmethod
+    def highest(
+        cls, levels: Iterable["RiskLevel"], default: "RiskLevel | None" = None
+    ) -> "RiskLevel":
+        """The most severe of ``levels``, or ``default`` if there are none.
+
+        One ordering for the whole system. The Python assessor, the report
+        builder and the Prolog bridge all aggregate through here so they
+        cannot disagree about which of two findings is worse.
+
+        ``default`` resolves to LOW here rather than in the signature: a
+        bare ``LOW`` in an Enum body is still the plain string "low", which
+        would compare equal to the member but fail an ``is`` check.
+        """
+        if default is None:
+            default = cls.LOW
+        return max(levels, key=lambda level: level.rank, default=default)
+
+
+_RISK_ORDER = {
+    RiskLevel.UNKNOWN: 0,
+    RiskLevel.LOW: 1,
+    RiskLevel.MEDIUM: 2,
+    RiskLevel.HIGH: 3,
+}
 
 
 class UsageKind(StrEnum):

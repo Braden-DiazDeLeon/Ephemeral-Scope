@@ -342,8 +342,48 @@ class UpgradeReport:
     assessment: RiskAssessment = field(default_factory=RiskAssessment)
     usages: tuple[ApiUsage, ...] = ()
     api_changes: tuple[ApiChange, ...] = ()
+    #: Where the two meet: the project's call sites that a change lands on.
+    affected_usages: tuple[AffectedUsage, ...] = ()
     classified_changes: tuple[ClassifiedChange, ...] = ()
     vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
+    #: Kept whole so the report can distinguish an advisory the upgrade
+    #: closes from one it leaves open; the flat tuple above cannot.
+    evidence: EvidenceBundle = field(default_factory=EvidenceBundle)
     findings: tuple[RiskFinding, ...] = ()
     recommended_tests: tuple[str, ...] = ()
     migration_actions: tuple[str, ...] = ()
+    #: "prolog" or "python". Disclosed rather than implied, so a reader
+    #: knows whether the logic engine actually ran.
+    inference_engine: str = "python"
+
+    @property
+    def classifier_disagreements(self) -> tuple[ClassifiedChange, ...]:
+        """Statements where the keyword rules and TF-IDF chose differently.
+
+        Derived rather than stored: a disagreement is a property of the
+        decision already attached to each statement, and duplicating it
+        would let the two drift apart.
+        """
+        return tuple(
+            change
+            for change in self.classified_changes
+            if change.decision is not None
+            and change.decision.rule_category is not None
+            and change.decision.model_category is not None
+            and not change.decision.agreement
+        )
+
+    @property
+    def fixed_vulnerabilities(self) -> tuple[VulnerabilityRecord, ...]:
+        """Advisories the target version resolves: the reason to upgrade."""
+        return self.evidence.fixed_by_upgrade
+
+    @property
+    def remaining_vulnerabilities(self) -> tuple[VulnerabilityRecord, ...]:
+        """Advisories still affecting the target version."""
+        return self.evidence.target_vulnerabilities
+
+    @property
+    def affected_files(self) -> tuple[Path, ...]:
+        seen = {affected.usage.file for affected in self.affected_usages}
+        return tuple(sorted(seen))
