@@ -91,7 +91,6 @@ class UpgradeAnalysisService:
         self.fact_builder_factory = fact_builder or FactBuilder
         self.risk_engine = risk_engine or PrologRiskEngine()
         self.report_builder = report_builder or ReportBuilder(engine=self.risk_engine)
-        self.snapshot_warnings: tuple[AnalysisWarning, ...] = ()
 
     def analyze(self, request: AnalysisRequest) -> UpgradeReport:
         """Run the whole pipeline and return the report.
@@ -116,8 +115,9 @@ class UpgradeAnalysisService:
             dependencies=tuple(self.dependency_parser.parse(manifest)),
         )
         declared = self._declared_dependency(manifest, request.package_name)
-        usages = self.usage_analyzer.analyze(manifest, request.package_name)
-        api_changes = self.compare_versions(request)
+        scan = self.usage_analyzer.analyze(manifest, request.package_name)
+        usages = list(scan.usages)
+        api_changes, snapshot_warnings = self.compare_versions(request)
         affected = self.matcher.match(usages, api_changes)
         # Only changes that land on code the project actually calls. Indexing
         # every package change would mark a note about an unused API as
@@ -131,7 +131,14 @@ class UpgradeAnalysisService:
         )
         evidence = self.evidence_collector.collect(upgrade)
         classified = self.release_note_classifier.classify(evidence.release_notes)
-        warnings = self._warnings()
+        # The model warning is fixed when the classifier is constructed. It
+        # is not request state, so sharing the classifier across requests is
+        # safe. Parser and snapshot warnings are local to this call.
+        warnings = _analysis_warnings(
+            scan.warnings,
+            snapshot_warnings,
+            getattr(self.release_note_classifier, "warning", None),
+        )
         classified = self._score_relevance(
             classified, usages, affected_changes, upgrade
         )
@@ -160,18 +167,8 @@ class UpgradeAnalysisService:
             inference=inference,
             declared_dependency=declared,
             warnings=warnings,
-            api_compared=not self.snapshot_warnings,
+            api_compared=not snapshot_warnings,
         )
-
-    def _warnings(self) -> tuple[AnalysisWarning, ...]:
-        """Failures from the stages that swallow errors instead of raising."""
-        found: list[AnalysisWarning] = []
-        found.extend(getattr(self.usage_analyzer, "warnings", ()))
-        found.extend(self.snapshot_warnings)
-        model_warning = getattr(self.release_note_classifier, "warning", None)
-        if model_warning is not None:
-            found.append(model_warning)
-        return tuple(found)
 
     def _declared_dependency(
         self, manifest: ProjectManifest, package_name: str
@@ -201,8 +198,10 @@ class UpgradeAnalysisService:
         with self._open_project(request.project_path) as root:
             scoped = replace(request, project_path=root)
             manifest = self.load_project(scoped.project_path)
-            usages = self.usage_analyzer.analyze(manifest, scoped.package_name)
-            changes = self.compare_versions(scoped)
+            usages = list(
+                self.usage_analyzer.analyze(manifest, scoped.package_name).usages
+            )
+            changes, _snapshot_warnings = self.compare_versions(scoped)
             return self.matcher.match(usages, changes)
 
     @contextmanager
@@ -225,12 +224,13 @@ class UpgradeAnalysisService:
             )
         return self.project_loader.load_directory(path)
 
-    def compare_versions(self, request: AnalysisRequest) -> list[ApiChange]:
+    def compare_versions(self, request: AnalysisRequest) -> tuple[list[ApiChange], tuple[AnalysisWarning, ...]]:
         """Diff the two versions, or report nothing when a snapshot is unusable.
 
         An empty or failed snapshot is not a package with no API. Diffing it
-        against a real one would report every symbol as removed. The failure
-        is recorded on ``snapshot_warnings`` and the comparison is skipped.
+        against a real one would report every symbol as removed, so the
+        comparison is skipped and the failure is returned with the result.
+        Nothing is stored on the service.
         """
         old, old_warning = self._snapshot(
             request.package_name, request.current_version
@@ -238,12 +238,12 @@ class UpgradeAnalysisService:
         new, new_warning = self._snapshot(
             request.package_name, request.target_version
         )
-        self.snapshot_warnings = tuple(
+        warnings = tuple(
             warning for warning in (old_warning, new_warning) if warning is not None
         )
-        if self.snapshot_warnings:
-            return []
-        return self.comparator.compare(old, new)
+        if warnings:
+            return [], warnings
+        return self.comparator.compare(old, new), warnings
 
     def _snapshot(
         self, package_name: str, version: str
@@ -335,6 +335,17 @@ class UpgradeAnalysisService:
                 test_references=references,
                 engine=self.risk_engine,
             )
+
+
+def _analysis_warnings(
+    parser: tuple[AnalysisWarning, ...],
+    snapshots: tuple[AnalysisWarning, ...],
+    model: AnalysisWarning | None,
+) -> tuple[AnalysisWarning, ...]:
+    found = [*parser, *snapshots]
+    if model is not None:
+        found.append(model)
+    return tuple(found)
 
 
 def _relative(path: Path, root: Path) -> Path:

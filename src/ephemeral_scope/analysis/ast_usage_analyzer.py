@@ -3,24 +3,30 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 
 from ephemeral_scope.domain.enums import UsageKind
 from ephemeral_scope.domain.models import AnalysisWarning, ApiUsage, ProjectManifest
 
 
+@dataclass(frozen=True, slots=True)
+class UsageScan:
+    """Usages found in one project, plus the files that could not be parsed.
+
+    Warnings travel with the result rather than on the analyzer. A shared
+    analyzer can serve overlapping requests without mixing their failures.
+    """
+
+    usages: tuple[ApiUsage, ...]
+    warnings: tuple[AnalysisWarning, ...] = ()
+
+
 class AstUsageAnalyzer:
     """AST nodes to find imports, calls, attributes, and inheritance"""
 
-    def __init__(self) -> None:
-        #: Files skipped on the most recent ``analyze`` call. A skipped file
-        #: contributes no usages, which is indistinguishable from a file that
-        #: does not use the package unless this is reported.
-        self.warnings: tuple[AnalysisWarning, ...] = ()
-
-    def analyze(self, manifest: ProjectManifest, package_name: str) -> list[ApiUsage]:
-        """Collect every usage of ``package_name`` across the projects Python files"""
-        self.warnings = ()
+    def analyze(self, manifest: ProjectManifest, package_name: str) -> UsageScan:
+        """Collect every usage of ``package_name`` across the project's Python files."""
         usages: list[ApiUsage] = []
         warnings: list[AnalysisWarning] = []
         for file in manifest.source_files + manifest.test_files:
@@ -28,8 +34,7 @@ class AstUsageAnalyzer:
             usages.extend(found)
             if warning is not None:
                 warnings.append(warning)
-        self.warnings = tuple(warnings)
-        return usages
+        return UsageScan(usages=tuple(usages), warnings=tuple(warnings))
 
     def analyze_file(
         self, file: Path, package_name: str

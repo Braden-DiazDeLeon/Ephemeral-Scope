@@ -1,6 +1,8 @@
 """Tests for PyPIClient (offline: archive handling and artifact selection)."""
 
 import tarfile
+import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -29,6 +31,32 @@ class TestPackageCache:
         found = PyPIClient(cache_dir=tmp_path).download_source("requests", "2.28.0")
 
         assert found == nested.parent
+
+    def test_one_download_serves_two_callers_of_the_same_version(self, tmp_path: Path):
+        client = PyPIClient(cache_dir=tmp_path)
+        calls = {"n": 0}
+
+        def install(package_name: str, version: str, target: Path) -> None:
+            calls["n"] += 1
+            time.sleep(0.05)
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "marker.txt").write_text(f"{package_name}=={version}\n")
+
+        client._download_into = install  # type: ignore[method-assign]
+        results: list[Path] = []
+
+        def fetch() -> None:
+            results.append(client.download_source("requests", "2.28.0"))
+
+        threads = [threading.Thread(target=fetch) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        assert calls["n"] == 1
+        assert results[0] == results[1]
+        assert (results[0] / "marker.txt").is_file()
 
     def test_an_empty_cache_directory_is_not_a_hit(self, tmp_path: Path):
         empty = tmp_path / "requests-2.28.0"

@@ -6,6 +6,7 @@ import json
 import shutil
 import tarfile
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 import zipfile
@@ -18,6 +19,12 @@ PYPI_BASE_URL = "https://pypi.org/pypi"
 #: Extracted releases live here and are reused. A missing cache used to fall
 #: back to mkdtemp, which nothing ever deleted.
 DEFAULT_PACKAGE_CACHE = Path(".cache") / "packages"
+
+#: One lock per cache directory and version, so two requests in this process
+#: cannot extract the same release into the same directory. Separate worker
+#: processes do not share the lock.
+_version_locks: dict[str, threading.Lock] = {}
+_version_locks_guard = threading.Lock()
 
 
 class PyPIError(RuntimeError):
@@ -57,24 +64,44 @@ class PyPIClient:
         and reused. The downloaded archive itself is removed once extracted.
         A failed extract removes the partial tree so the next call tries again
         instead of treating an empty directory as a cached release.
+
+        Requests for the same version share a lock. The cache is checked
+        again after the lock is acquired, so the second request waits and
+        then reuses the tree the first one wrote.
         """
-        target = self.cache_dir / _cache_key(package_name, version)
+        key = _cache_key(package_name, version)
+        target = self.cache_dir / key
         cached = _source_root(target, package_name, version)
         if cached is not None:
             return cached
 
+        with _version_lock(self.cache_dir, key):
+            cached = _source_root(target, package_name, version)
+            if cached is not None:
+                return cached
+            self._download_into(package_name, version, target)
+
+        cached = _source_root(target, package_name, version)
+        if cached is None:
+            raise PyPIError(f"Extracted {package_name}=={version} produced no files")
+        return cached
+
+    def _download_into(self, package_name: str, version: str, target: Path) -> None:
+        """Download and extract one release into ``target``.
+
+        Extraction happens in a private directory and is moved into place
+        only after it succeeds, so a reader never opens a half-written tree
+        and a failure does not leave an empty directory that looks cached.
+        """
         metadata = self.fetch_metadata(package_name, version)
         artifact = _select_artifact(metadata.get("urls", []))
         if artifact is None:
             raise PyPIError(f"No usable artifact for {package_name}=={version}")
 
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        target.mkdir(parents=True, exist_ok=True)
-
         filename = artifact["filename"]
-        download_dir = Path(tempfile.mkdtemp(prefix="ephemeral-scope-download-"))
-        archive = download_dir / filename
+        staging = Path(tempfile.mkdtemp(prefix="ephemeral-scope-download-"))
         try:
+            archive = staging / filename
             try:
                 with urllib.request.urlopen(
                     artifact["url"], timeout=self.timeout, context=_ssl_context()
@@ -83,18 +110,22 @@ class PyPIClient:
             except urllib.error.URLError as exc:
                 raise PyPIError(f"Could not download {filename}: {exc}") from exc
 
-            try:
-                _extract(archive, target)
-            except Exception:
-                shutil.rmtree(target, ignore_errors=True)
-                raise
+            extracted = staging / "tree"
+            extracted.mkdir()
+            _extract(archive, extracted)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.move(extracted, target)
         finally:
-            shutil.rmtree(download_dir, ignore_errors=True)
+            shutil.rmtree(staging, ignore_errors=True)
 
-        cached = _source_root(target, package_name, version)
-        if cached is None:
-            raise PyPIError(f"Extracted {package_name}=={version} produced no files")
-        return cached
+
+def _version_lock(cache_dir: Path, key: str) -> threading.Lock:
+    """The lock for one cached release, shared by every client of that cache."""
+    name = f"{cache_dir.expanduser().resolve()}:{key}"
+    with _version_locks_guard:
+        return _version_locks.setdefault(name, threading.Lock())
 
 
 def _cache_key(package_name: str, version: str) -> str:

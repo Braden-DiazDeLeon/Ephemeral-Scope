@@ -6,6 +6,7 @@ import pytest
 
 from ephemeral_scope.analysis.ast_usage_analyzer import AstUsageAnalyzer
 from ephemeral_scope.domain.enums import UsageKind
+from ephemeral_scope.ingestion.project_loader import ProjectLoader
 
 
 def analyze(tmp_path: Path, source: str, package: str = "requests"):
@@ -105,3 +106,22 @@ def test_records_position(tmp_path: Path):
 def test_unparsable_file_is_skipped(tmp_path: Path):
     usages = analyze(tmp_path, "def broken(:\n")
     assert usages == []
+
+
+def test_parse_warnings_stay_with_the_scan(tmp_path: Path):
+    """A later scan must not inherit an earlier file's failure."""
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "broken.py").write_text("def (:\n")
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    (clean / "ok.py").write_text("x = 1\n")
+
+    analyzer = AstUsageAnalyzer()
+    loader = ProjectLoader()
+    first = analyzer.analyze(loader.load_directory(broken), "requests")
+    second = analyzer.analyze(loader.load_directory(clean), "requests")
+
+    assert len(first.warnings) == 1
+    assert second.warnings == ()
+    assert not hasattr(analyzer, "warnings")

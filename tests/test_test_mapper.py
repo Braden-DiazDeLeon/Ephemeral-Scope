@@ -29,7 +29,7 @@ def project(tmp_path: Path) -> Path:
 
 def _map(project: Path):
     manifest = ProjectLoader().load_directory(project)
-    usages = AstUsageAnalyzer().analyze(manifest, "requests")
+    usages = list(AstUsageAnalyzer().analyze(manifest, "requests").usages)
     return manifest, usages, TestMapper().map(manifest, usages)
 
 
@@ -52,7 +52,7 @@ def test_symbol_mention_is_recorded(tmp_path: Path):
     )
 
     manifest = ProjectLoader().load_directory(tmp_path)
-    usages = AstUsageAnalyzer().analyze(manifest, "requests")
+    usages = list(AstUsageAnalyzer().analyze(manifest, "requests").usages)
     refs = TestMapper().map(manifest, usages)
 
     assert any(r.related_symbol == "requests.get" for r in refs)
@@ -67,7 +67,7 @@ def test_symbol_match_requires_whole_word(tmp_path: Path):
     )
 
     manifest = ProjectLoader().load_directory(tmp_path)
-    usages = AstUsageAnalyzer().analyze(manifest, "requests")
+    usages = list(AstUsageAnalyzer().analyze(manifest, "requests").usages)
     refs = TestMapper().map(manifest, usages)
 
     assert all(r.related_symbol != "requests.get" for r in refs)
@@ -86,7 +86,7 @@ def test_import_based_match(tmp_path: Path):
     )
 
     manifest = ProjectLoader().load_directory(tmp_path)
-    usages = AstUsageAnalyzer().analyze(manifest, "requests")
+    usages = list(AstUsageAnalyzer().analyze(manifest, "requests").usages)
     refs = TestMapper().map(manifest, usages)
 
     pairs = {(r.test_file.name, r.source_file.name) for r in refs}
