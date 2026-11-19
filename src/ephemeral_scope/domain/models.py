@@ -243,7 +243,38 @@ class ClassifiedChange:
 @dataclass(frozen=True, slots=True)
 class EvidenceBundle:
     release_notes: tuple[ReleaseNoteItem, ...] = ()
+    #: Every advisory touching either version, deduplicated by id.
     vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
+    #: Advisories affecting the version the project is on today.
+    current_vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
+    #: Advisories still affecting the version it would move to.
+    target_vulnerabilities: tuple[VulnerabilityRecord, ...] = ()
+
+    @property
+    def fixed_by_upgrade(self) -> tuple[VulnerabilityRecord, ...]:
+        """Advisories the upgrade resolves.
+
+        These are a reason to upgrade, not a hazard of upgrading, so they
+        must never be folded into migration risk.
+        """
+        still_open = {record.vulnerability_id for record in self.target_vulnerabilities}
+        return tuple(
+            record
+            for record in self.current_vulnerabilities
+            if record.vulnerability_id not in still_open
+        )
+
+    @property
+    def introduced_by_upgrade(self) -> tuple[VulnerabilityRecord, ...]:
+        """Advisories that affect the target but not the current version."""
+        already_open = {
+            record.vulnerability_id for record in self.current_vulnerabilities
+        }
+        return tuple(
+            record
+            for record in self.target_vulnerabilities
+            if record.vulnerability_id not in already_open
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,9 +290,56 @@ class RiskFinding:
 
 
 @dataclass(frozen=True, slots=True)
+class RiskReason:
+    """One piece of evidence behind a risk or urgency level."""
+
+    level: RiskLevel
+    rule_name: str
+    subject: str
+
+    def __str__(self) -> str:
+        return f"{self.rule_name}: {self.subject}"
+
+
+@dataclass(frozen=True, slots=True)
+class RiskAssessment:
+    """The two independent questions asked of one upgrade.
+
+    ``migration_risk`` answers "will this break my project"; it is driven by
+    removed symbols, changed signatures and relevant behavioural changes.
+    ``upgrade_urgency`` answers "how badly do I need this anyway"; it is
+    driven by vulnerabilities.
+
+    They never feed each other. A vulnerability the target version fixes
+    raises urgency and leaves migration risk untouched, because a security
+    fix is a reason to upgrade rather than a hazard of upgrading.
+    """
+
+    migration_risk: RiskLevel = RiskLevel.LOW
+    upgrade_urgency: RiskLevel = RiskLevel.LOW
+    migration_reasons: tuple[RiskReason, ...] = ()
+    urgency_reasons: tuple[RiskReason, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "migration_risk": str(self.migration_risk),
+            "upgrade_urgency": str(self.upgrade_urgency),
+            "migration_reasons": [
+                {"rule": r.rule_name, "subject": r.subject} for r in self.migration_reasons
+            ],
+            "urgency_reasons": [
+                {"rule": r.rule_name, "subject": r.subject} for r in self.urgency_reasons
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class UpgradeReport:
     upgrade: DependencyUpgrade
+    #: Retained for compatibility; mirrors ``assessment.migration_risk``,
+    #: since "is this upgrade dangerous" is the migration question alone.
     overall_risk: RiskLevel
+    assessment: RiskAssessment = field(default_factory=RiskAssessment)
     usages: tuple[ApiUsage, ...] = ()
     api_changes: tuple[ApiChange, ...] = ()
     classified_changes: tuple[ClassifiedChange, ...] = ()

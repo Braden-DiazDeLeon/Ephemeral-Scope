@@ -33,9 +33,20 @@ class EvidenceCollector:
         Each provider is isolated so that one failing source still leaves the
         rest of the evidence usable.
         """
+        current = self._for_version(upgrade.package_name, upgrade.current_version)
+        target = self._for_version(upgrade.package_name, upgrade.target_version)
+
+        merged: dict[str, VulnerabilityRecord] = {}
+        for record in (*current, *target):
+            merged.setdefault(record.vulnerability_id, record)
+
         return EvidenceBundle(
             release_notes=tuple(self._release_notes(upgrade)),
-            vulnerabilities=tuple(self._vulnerabilities(upgrade)),
+            vulnerabilities=tuple(
+                sorted(merged.values(), key=lambda r: r.vulnerability_id)
+            ),
+            current_vulnerabilities=tuple(current),
+            target_vulnerabilities=tuple(target),
         )
 
     def _release_notes(self, upgrade: DependencyUpgrade) -> list[ReleaseNoteItem]:
@@ -45,24 +56,17 @@ class EvidenceCollector:
             logger.exception("Release notes unavailable for %s", upgrade.package_name)
             return []
 
-    def _vulnerabilities(
-        self, upgrade: DependencyUpgrade
-    ) -> list[VulnerabilityRecord]:
-        """Query both versions: the current one to show what the upgrade
-        fixes, the target to show what it would introduce."""
-        found: dict[str, VulnerabilityRecord] = {}
-        for version in (upgrade.current_version, upgrade.target_version):
-            try:
-                records = self.osv_client.get_vulnerabilities(
-                    upgrade.package_name, version
-                )
-            except Exception:
-                logger.exception(
-                    "Vulnerability lookup failed for %s==%s",
-                    upgrade.package_name,
-                    version,
-                )
-                continue
-            for record in records:
-                found.setdefault(record.vulnerability_id, record)
-        return sorted(found.values(), key=lambda r: r.vulnerability_id)
+    def _for_version(self, package: str, version: str) -> list[VulnerabilityRecord]:
+        """Advisories affecting one version.
+
+        Kept per version rather than merged: an advisory that affects the
+        current version but not the target is fixed *by* the upgrade, and
+        collapsing the two sets would make that indistinguishable from one
+        the upgrade leaves open.
+        """
+        try:
+            records = self.osv_client.get_vulnerabilities(package, version)
+        except Exception:
+            logger.exception("Vulnerability lookup failed for %s==%s", package, version)
+            return []
+        return sorted(records, key=lambda r: r.vulnerability_id)
