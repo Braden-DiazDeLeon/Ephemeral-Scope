@@ -1,11 +1,25 @@
 """Tests for UpgradeAnalysisService wiring (no network)."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from ephemeral_scope.domain.enums import ApiSymbolKind
-from ephemeral_scope.domain.models import AnalysisRequest, ApiSnapshot, ApiSymbol
+from ephemeral_scope.domain.enums import ApiSymbolKind, ChangeType
+from ephemeral_scope.domain.models import (
+    AnalysisRequest,
+    ApiSnapshot,
+    ApiSymbol,
+    DependencyUpgrade,
+    EvidenceBundle,
+    ReleaseNoteItem,
+    RiskAssessment,
+    VulnerabilityRecord,
+)
+from ephemeral_scope.inference.fact_builder import FactBase
+from ephemeral_scope.inference.prolog_risk_engine import InferenceResult
+from ephemeral_scope.main import create_service
+from ephemeral_scope.ml.relevance_matcher import RelevanceMatcher
 from ephemeral_scope.services.upgrade_analysis_service import UpgradeAnalysisService
 
 APPEND = ApiSymbol(
@@ -118,3 +132,316 @@ def test_accepts_a_zip_archive(service, project, tmp_path: Path):
     )
     affected = service.find_affected_usages(request)
     assert [a.usage.symbol for a in affected] == ["pandas.DataFrame.append"]
+
+
+class FakeEvidenceCollector:
+    """Canned release notes and advisories. Never opens a socket."""
+
+    def __init__(self, bundle: EvidenceBundle) -> None:
+        self.bundle = bundle
+        self.calls: list[DependencyUpgrade] = []
+
+    def collect(self, upgrade: DependencyUpgrade) -> EvidenceBundle:
+        self.calls.append(upgrade)
+        return self.bundle
+
+
+class RecordingEngine:
+    """Stands in for Prolog so the test proves what the service hands over."""
+
+    def __init__(self) -> None:
+        self.fact_bases: list[FactBase] = []
+
+    def infer(self, facts: FactBase) -> InferenceResult:
+        self.fact_bases.append(facts)
+        return InferenceResult(assessment=RiskAssessment())
+
+
+def _full_project(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "report.py").write_text(
+        "import pandas as pd\n"
+        "\n"
+        'df = pd.DataFrame({"a": [1]})\n'
+        'df.append({"a": 2})\n'
+    )
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_report.py").write_text("import report\n\ndef test_append():\n    pass\n")
+    (tmp_path / "requirements.txt").write_text("pandas==1.5.3\n")
+    return tmp_path
+
+
+def test_analyze_returns_a_complete_report_without_network(tmp_path: Path):
+    """The acceptance criterion: one request in, one report out.
+
+    Snapshots stand in for package installation and the evidence collector
+    stands in for GitHub and OSV, so nothing here can reach the network.
+    """
+    evidence = FakeEvidenceCollector(
+        EvidenceBundle(
+            release_notes=(
+                ReleaseNoteItem(
+                    text=(
+                        "Removed the method `DataFrame.append`; "
+                        "use `pandas.concat` instead."
+                    ),
+                    release_version="2.0.0",
+                ),
+            ),
+            current_vulnerabilities=(
+                VulnerabilityRecord(
+                    vulnerability_id="GHSA-9wx4-h78v-vm56", summary="x"
+                ),
+            ),
+        )
+    )
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=evidence,
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=_full_project(tmp_path),
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert evidence.calls == [report.upgrade]
+    assert report.overall_risk.value == "high"
+    assert report.assessment.upgrade_urgency.value == "high"
+    assert [a.usage.symbol for a in report.affected_usages] == [
+        "pandas.DataFrame.append"
+    ]
+    assert report.classified_changes[0].category.value == "breaking_change"
+    assert report.classified_changes[0].relevance_score >= 0.5
+    assert [v.vulnerability_id for v in report.fixed_vulnerabilities] == [
+        "GHSA-9wx4-h78v-vm56"
+    ]
+    assert any(f.rule_name == "removed_used_api" for f in report.findings)
+    assert "Replace pandas.DataFrame.append with pandas.concat." in (
+        report.migration_actions
+    )
+    assert (
+        "Upgrade to pandas 2.0.0 to address GHSA-9wx4-h78v-vm56."
+        in report.migration_actions
+    )
+    assert any(
+        "test_report.py" in action and "src/report.py" in action
+        for action in report.migration_actions
+    )
+
+
+def test_a_missing_prolog_still_returns_the_report(tmp_path: Path):
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    with patch("shutil.which", return_value=None):
+        report = service.analyze(
+            AnalysisRequest(
+                project_path=_full_project(tmp_path),
+                package_name="pandas",
+                current_version="1.5.3",
+                target_version="2.0.0",
+            )
+        )
+
+    assert report.inference_engine == "python"
+    assert report.overall_risk.value == "high"
+    assert any(f.rule_name == "removed_used_api" for f in report.findings)
+
+
+def test_the_engine_receives_facts_for_this_analysis_only(tmp_path: Path):
+    engine = RecordingEngine()
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+        risk_engine=engine,
+    )
+    request = AnalysisRequest(
+        project_path=_full_project(tmp_path),
+        package_name="pandas",
+        current_version="1.5.3",
+        target_version="2.0.0",
+    )
+
+    service.analyze(request)
+    service.analyze(request)
+
+    assert len(engine.fact_bases) == 2
+    first, second = engine.fact_bases
+    assert any("affected_usage" in clause for clause in first.facts)
+    # A fresh builder each time: the second run has the same facts once,
+    # not twice.
+    assert first.facts == second.facts
+    assert first is not second
+
+
+DISAGREEMENT = (
+    "This release contains bug fixes and performance improvements."
+)
+
+
+def test_default_application_configuration_uses_the_model(tmp_path, monkeypatch):
+    """The factory loads the verified model; a bare service does not.
+
+    The sentence is one the keyword rules call a bug fix and the saved
+    model calls irrelevant, so a disagreement only appears when the model
+    actually ran.
+    """
+    model = (
+        Path(__file__).resolve().parents[1]
+        / "models"
+        / "release_note_classifier.joblib"
+    )
+    monkeypatch.setenv("EPHEMERAL_SCOPE_MODEL_PATH", str(model))
+    service = create_service()
+    service.snapshot_builder = FakeSnapshotBuilder(
+        {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+    )
+    service.evidence_collector = FakeEvidenceCollector(
+        EvidenceBundle(
+            release_notes=(
+                ReleaseNoteItem(text=DISAGREEMENT, release_version="2.0.0"),
+            )
+        )
+    )
+
+    assert service.release_note_classifier.model is not None
+    assert UpgradeAnalysisService().release_note_classifier.model is None
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=_full_project(tmp_path),
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    decision = report.classifier_disagreements[0].decision
+    assert decision.model_category is not None
+    assert decision.rule_category.value == "bug_fix"
+    assert decision.model_category.value == "irrelevant"
+
+
+GET = ApiSymbol(
+    qualified_name="requests.api.get",
+    symbol_kind=ApiSymbolKind.FUNCTION,
+    signature="get(url, params=None, **kwargs)",
+)
+SEND = ApiSymbol(
+    qualified_name="requests.sessions.Session.send",
+    symbol_kind=ApiSymbolKind.METHOD,
+    signature="send(self, request, **kwargs)",
+)
+UNUSED_NOTE = "Removed Session.send"
+
+
+def test_unused_changed_api_is_not_project_relevant(tmp_path: Path):
+    """A note about a removed API the project never calls stays irrelevant.
+
+    Indexing every API change would score this 0.7, because Session.send
+    changed, and 0.7 clears the threshold for a medium-risk finding.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "client.py").write_text(
+        "import requests\nrequests.get('https://example.com')\n"
+    )
+    (root / "requirements.txt").write_text("requests==2.28.0\n")
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"2.28.0": (GET, SEND), "2.32.0": (GET,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(
+            EvidenceBundle(
+                release_notes=(
+                    ReleaseNoteItem(text=UNUSED_NOTE, release_version="2.32.0"),
+                )
+            )
+        ),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=root,
+            package_name="requests",
+            current_version="2.28.0",
+            target_version="2.32.0",
+        )
+    )
+
+    note = report.classified_changes[0]
+    indexed_everything = RelevanceMatcher(
+        report.usages, report.api_changes, "requests"
+    ).score(UNUSED_NOTE)
+
+    assert any(change.change_type is ChangeType.REMOVED for change in report.api_changes)
+    assert indexed_everything.score >= 0.7
+    assert note.relevance_score < 0.5
+    assert all(f.rule_name != "relevant_breaking_note" for f in report.findings)
+
+
+def test_report_records_the_declared_dependency(tmp_path: Path):
+    root = _full_project(tmp_path)
+    # Different capitalisation from the request: matching is canonical.
+    (root / "requirements.txt").write_text("Pandas==1.5.3\n")
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=root,
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    declared = report.declared_dependency
+    assert declared is not None
+    assert declared.name == "Pandas"
+    assert declared.specifier == "==1.5.3"
+    assert declared.source_file.name == "requirements.txt"
+
+
+def test_an_undeclared_package_warns_but_is_still_analyzed(tmp_path, caplog):
+    root = _full_project(tmp_path)
+    (root / "requirements.txt").write_text("flask==2.0.0\n")
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+
+    with caplog.at_level("WARNING"):
+        report = service.analyze(
+            AnalysisRequest(
+                project_path=root,
+                package_name="pandas",
+                current_version="1.5.3",
+                target_version="2.0.0",
+            )
+        )
+
+    assert report.declared_dependency is None
+    assert "not declared" in caplog.text
+    assert any(f.rule_name == "removed_used_api" for f in report.findings)

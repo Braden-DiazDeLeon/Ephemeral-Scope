@@ -13,7 +13,13 @@ build/
 # pins the packages, release ranges and hashes needed to verify the rebuild.
 data/raw/
 data/generated/
-models/
+
+# Ignore everything under models/ except the verified classifier. The weak
+# model was trained on suggested labels and is a diagnostic only; the
+# verified one is small enough to track so a fresh clone can run the
+# hybrid pipeline without retraining.
+models/*
+!models/release_note_classifier.joblib
 
 # Committed on purpose, so the experiment can be reproduced:
 #   results/*                  scores quoted in the report, from

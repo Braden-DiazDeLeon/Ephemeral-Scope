@@ -355,6 +355,10 @@ class UpgradeReport:
     #: "prolog" or "python". Disclosed rather than implied, so a reader
     #: knows whether the logic engine actually ran.
     inference_engine: str = "python"
+    #: The declaration of the package under analysis, when the project
+    #: lists it. ``None`` when it is absent, which is a warning rather than
+    #: a rejection: the package may be transitive or installed dynamically.
+    declared_dependency: Dependency | None = None
 
     @property
     def classifier_disagreements(self) -> tuple[ClassifiedChange, ...]:

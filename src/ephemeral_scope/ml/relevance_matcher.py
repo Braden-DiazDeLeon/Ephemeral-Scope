@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ephemeral_scope.domain.enums import ReleaseNoteCategory
 from ephemeral_scope.domain.models import (
@@ -252,6 +252,28 @@ class RelevanceMatcher:
             relevance_score=result.score,
         )
 
+    def annotate(
+        self, changes: Sequence[ClassifiedChange]
+    ) -> list[ClassifiedChange]:
+        """Attach a relevance score to every statement, dropping none.
+
+        Order is preserved, because downstream fact identifiers are assigned
+        by position. A statement with no connection to the project stays in
+        the list at score 0; filtering is the caller's decision.
+        """
+        annotated = []
+        for change in changes:
+            result = self.score(change.note.text)
+            annotated.append(
+                replace(
+                    change,
+                    mentioned_symbols=result.mentioned_symbols,
+                    matched_project_symbols=result.matched_project_symbols,
+                    relevance_score=result.score,
+                )
+            )
+        return annotated
+
     def partition(
         self, changes: Sequence[ClassifiedChange]
     ) -> tuple[list[ClassifiedChange], list[ClassifiedChange]]:
@@ -263,18 +285,7 @@ class RelevanceMatcher:
         """
         relevant: list[ClassifiedChange] = []
         general: list[ClassifiedChange] = []
-
-        for change in changes:
-            result = self.score(change.note.text)
-            scored = ClassifiedChange(
-                note=change.note,
-                category=change.category,
-                confidence=change.confidence,
-                mentioned_symbols=result.mentioned_symbols,
-                matched_project_symbols=result.matched_project_symbols,
-                relevance_score=result.score,
-                decision=change.decision,
-            )
-            (relevant if result.is_relevant else general).append(scored)
-
+        for change in self.annotate(changes):
+            bucket = relevant if change.relevance_score >= RELEVANCE_THRESHOLD else general
+            bucket.append(change)
         return relevant, general

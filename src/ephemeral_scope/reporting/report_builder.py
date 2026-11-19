@@ -20,6 +20,7 @@ from ephemeral_scope.domain.models import (
     ApiChange,
     ApiUsage,
     ClassifiedChange,
+    Dependency,
     DependencyUpgrade,
     EvidenceBundle,
     RiskFinding,
@@ -82,6 +83,7 @@ class ReportBuilder:
         evidence: EvidenceBundle | None = None,
         test_references: Sequence[TestReference] = (),
         inference: InferenceResult | None = None,
+        declared_dependency: Dependency | None = None,
     ) -> UpgradeReport:
         """Produce the report.
 
@@ -119,6 +121,7 @@ class ReportBuilder:
             evidence=evidence,
             findings=inference.findings,
             recommended_tests=inference.recommended_tests,
+            declared_dependency=declared_dependency,
             migration_actions=migration_actions(
                 upgrade,
                 affected=affected,
