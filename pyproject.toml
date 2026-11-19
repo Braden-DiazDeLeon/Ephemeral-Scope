@@ -30,6 +30,14 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The Prolog rules are loaded from the installed package at runtime, not
+# just from a source checkout, so they have to travel in the wheel.
+[tool.setuptools.package-data]
+"ephemeral_scope.inference" = ["*.pl"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "integration: spawns a real SWI-Prolog subprocess; skipped when absent",
+]
