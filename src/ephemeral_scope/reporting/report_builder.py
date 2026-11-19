@@ -46,6 +46,18 @@ BREAKING_CHANGES = frozenset(
     }
 )
 
+#: A signature change is the comparator's generic record. When it also
+#: identified which parameter moved, the generic recommendation repeats the
+#: specific one and is dropped.
+SPECIFIC_PARAMETER_CHANGES = frozenset(
+    {
+        ChangeType.PARAMETER_RENAMED,
+        ChangeType.PARAMETER_REMOVED,
+        ChangeType.PARAMETER_ADDED_REQUIRED,
+        ChangeType.DEFAULT_CHANGED,
+    }
+)
+
 #: Phrasings release notes use to name a replacement. Only a backticked or
 #: dotted name is accepted as the answer, so a sentence such as "use the new
 #: API instead" yields nothing rather than the word "the".
@@ -207,6 +219,7 @@ def migration_actions(
     """
     evidence = evidence or EvidenceBundle()
     replacements = _replacements_from(classified_changes)
+    affected = _without_redundant_signature_changes(affected)
 
     actions: list[str] = []
     actions += _breaking_actions(affected, replacements, upgrade)
@@ -214,6 +227,30 @@ def migration_actions(
     actions += _security_actions(upgrade, evidence)
     actions += _test_actions(affected, test_references)
     return _dedupe(actions)
+
+
+def _without_redundant_signature_changes(
+    affected: Sequence[AffectedUsage],
+) -> tuple[AffectedUsage, ...]:
+    """Drop ``signature_changed`` where a parameter change names the same symbol.
+
+    The comparator emits both. "Its signature is no longer compatible" adds
+    nothing once the report already says which parameter was renamed, removed,
+    added, or given a new default.
+    """
+    specific = {
+        item.usage.symbol
+        for item in affected
+        if item.change.change_type in SPECIFIC_PARAMETER_CHANGES
+    }
+    return tuple(
+        item
+        for item in affected
+        if not (
+            item.change.change_type is ChangeType.SIGNATURE_CHANGED
+            and item.usage.symbol in specific
+        )
+    )
 
 
 def _breaking_actions(

@@ -18,7 +18,7 @@ from ephemeral_scope.domain.models import (
 )
 from ephemeral_scope.inference.fact_builder import FactBase
 from ephemeral_scope.inference.prolog_risk_engine import InferenceResult
-from ephemeral_scope.main import create_service
+from ephemeral_scope.main import create_service, model_path
 from ephemeral_scope.ml.relevance_matcher import RelevanceMatcher
 from ephemeral_scope.services.upgrade_analysis_service import UpgradeAnalysisService
 
@@ -132,6 +132,51 @@ def test_accepts_a_zip_archive(service, project, tmp_path: Path):
     )
     affected = service.find_affected_usages(request)
     assert [a.usage.symbol for a in affected] == ["pandas.DataFrame.append"]
+    # The upload directory is gone once the analysis returns. This path is
+    # still absolute because find_affected_usages does not build a report.
+    assert not affected[0].usage.file.exists()
+
+
+def test_a_zip_report_uses_project_relative_paths(tmp_path: Path):
+    """The deleted extraction directory must not appear in the report."""
+    import zipfile
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    project = _full_project(project_dir)
+    archive = tmp_path / "project.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        for file in project.rglob("*"):
+            if file.is_file():
+                zipped.write(file, file.relative_to(project))
+
+    service = UpgradeAnalysisService(
+        snapshot_builder=FakeSnapshotBuilder(
+            {"1.5.3": (DATAFRAME, APPEND), "2.0.0": (DATAFRAME,)}
+        ),
+        evidence_collector=FakeEvidenceCollector(EvidenceBundle()),
+    )
+    report = service.analyze(
+        AnalysisRequest(
+            project_path=archive,
+            package_name="pandas",
+            current_version="1.5.3",
+            target_version="2.0.0",
+        )
+    )
+
+    assert report.affected_usages[0].usage.file == Path("src/report.py")
+    assert report.recommended_tests == ("tests/test_report.py",)
+    assert all(
+        "ephemeral-scope-upload-" not in action for action in report.migration_actions
+    )
+    assert report.declared_dependency is not None
+    assert report.declared_dependency.source_file == Path("requirements.txt")
+    assert all(
+        finding.file is None or "ephemeral-scope-upload-" not in finding.file.as_posix()
+        for finding in report.findings
+    )
+    assert not report.affected_usages[0].usage.file.exists()
 
 
 class FakeEvidenceCollector:
@@ -294,6 +339,13 @@ def test_the_engine_receives_facts_for_this_analysis_only(tmp_path: Path):
 DISAGREEMENT = (
     "This release contains bug fixes and performance improvements."
 )
+
+
+def test_default_model_path_exists(monkeypatch):
+    """The no-override path is the repository file, not the working directory."""
+    monkeypatch.delenv("EPHEMERAL_SCOPE_MODEL_PATH", raising=False)
+
+    assert model_path().is_file()
 
 
 def test_default_application_configuration_uses_the_model(tmp_path, monkeypatch):
@@ -537,9 +589,12 @@ def test_an_unparseable_source_file_is_reported(tmp_path: Path):
     )
 
     assert any(
-        warning.component == "parser" and "broken.py" in warning.message
+        warning.component == "parser" and warning.message.startswith(
+            "Source file could not be parsed: src/broken.py"
+        )
         for warning in report.warnings
     )
+    assert all(str(root) not in warning.message for warning in report.warnings)
     assert any(f.rule_name == "removed_used_api" for f in report.findings)
 
 

@@ -7,10 +7,34 @@ from pathlib import Path
 import pytest
 
 from ephemeral_scope.packages.pypi_client import (
+    DEFAULT_PACKAGE_CACHE,
+    PyPIClient,
     PyPIError,
     _extract,
     _select_artifact,
+    _source_root,
 )
+
+
+class TestPackageCache:
+    def test_the_default_cache_is_deliberate(self):
+        assert PyPIClient().cache_dir == DEFAULT_PACKAGE_CACHE
+        assert DEFAULT_PACKAGE_CACHE == Path(".cache/packages")
+
+    def test_a_cached_release_is_reused_without_downloading(self, tmp_path: Path):
+        nested = tmp_path / "requests-2.28.0" / "requests-2.28.0" / "requests"
+        nested.mkdir(parents=True)
+        (nested / "__init__.py").write_text("")
+
+        found = PyPIClient(cache_dir=tmp_path).download_source("requests", "2.28.0")
+
+        assert found == nested.parent
+
+    def test_an_empty_cache_directory_is_not_a_hit(self, tmp_path: Path):
+        empty = tmp_path / "requests-2.28.0"
+        empty.mkdir()
+
+        assert _source_root(empty, "requests", "2.28.0") is None
 
 
 class TestSelectArtifact:

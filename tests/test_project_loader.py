@@ -66,9 +66,12 @@ class TestLoadZip:
                 if file.is_file():
                     zf.write(file, file.relative_to(sample_project))
 
-        manifest = ProjectLoader().load_zip(zip_path)
+        destination = tmp_path / "extracted"
+        manifest = ProjectLoader().load_zip(zip_path, destination)
         names = {p.name for p in manifest.source_files}
         assert "app.py" in names
+        # The caller owns the directory; loading does not delete it.
+        assert destination.is_dir()
 
     def test_zip_path_traversal_rejected(self, tmp_path: Path):
         zip_path = tmp_path / "evil.zip"
@@ -76,4 +79,41 @@ class TestLoadZip:
             zf.writestr("../../outside.py", "pwned = True")
 
         with pytest.raises(ValueError, match="escape"):
-            ProjectLoader().load_zip(zip_path)
+            ProjectLoader().load_zip(zip_path, tmp_path / "extracted")
+
+    def test_archive_larger_than_the_limit_is_rejected(self, tmp_path: Path):
+        zip_path = tmp_path / "big.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("app.py", "x = 1\n")
+
+        loader = ProjectLoader(max_zip_bytes=zip_path.stat().st_size - 1)
+        with pytest.raises(ValueError, match="ZIP is"):
+            loader.extract_zip(zip_path, tmp_path / "extracted")
+
+    def test_too_many_files_are_rejected(self, tmp_path: Path):
+        zip_path = tmp_path / "many.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("a.py", "a = 1\n")
+            zf.writestr("b.py", "b = 1\n")
+
+        with pytest.raises(ValueError, match="more than 1"):
+            ProjectLoader(max_files=1).extract_zip(zip_path, tmp_path / "extracted")
+
+    def test_a_file_over_the_per_file_limit_is_rejected(self, tmp_path: Path):
+        zip_path = tmp_path / "wide.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("app.py", "x" * 20)
+
+        with pytest.raises(ValueError, match="per-file|declares"):
+            ProjectLoader(max_file_bytes=10).extract_zip(zip_path, tmp_path / "extracted")
+
+    def test_extracted_total_over_the_limit_is_rejected(self, tmp_path: Path):
+        zip_path = tmp_path / "total.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("a.py", "x" * 8)
+            zf.writestr("b.py", "y" * 8)
+
+        with pytest.raises(ValueError, match="expands past"):
+            ProjectLoader(max_file_bytes=8, max_extracted_bytes=10).extract_zip(
+                zip_path, tmp_path / "extracted"
+            )

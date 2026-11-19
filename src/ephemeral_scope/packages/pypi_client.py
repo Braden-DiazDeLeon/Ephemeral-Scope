@@ -15,6 +15,10 @@ from ephemeral_scope.http_cache import ssl_context as _ssl_context
 
 PYPI_BASE_URL = "https://pypi.org/pypi"
 
+#: Extracted releases live here and are reused. A missing cache used to fall
+#: back to mkdtemp, which nothing ever deleted.
+DEFAULT_PACKAGE_CACHE = Path(".cache") / "packages"
+
 
 class PyPIError(RuntimeError):
     """Raised when package metadata or artifacts cannot be retrieved"""
@@ -26,11 +30,11 @@ class PyPIClient:
     def __init__(
         self,
         base_url: str = PYPI_BASE_URL,
-        cache_dir: Path | None = None,
+        cache_dir: Path | None = DEFAULT_PACKAGE_CACHE,
         timeout: float = 30.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else DEFAULT_PACKAGE_CACHE
         self.timeout = timeout
 
     def fetch_metadata(self, package_name: str, version: str) -> dict:
@@ -47,26 +51,28 @@ class PyPIClient:
             ) from exc
 
     def download_source(self, package_name: str, version: str) -> Path:
-        """Download and extract a release, returning the directory holding its code"""
-        if self.cache_dir is not None:
-            cached = self.cache_dir / f"{package_name}-{version}"
-            if cached.is_dir():
-                return cached
+        """Download and extract a release, returning the directory holding its code.
+
+        The extracted tree is kept at ``.cache/packages/{package}-{version}/``
+        and reused. The downloaded archive itself is removed once extracted.
+        A failed extract removes the partial tree so the next call tries again
+        instead of treating an empty directory as a cached release.
+        """
+        target = self.cache_dir / _cache_key(package_name, version)
+        cached = _source_root(target, package_name, version)
+        if cached is not None:
+            return cached
 
         metadata = self.fetch_metadata(package_name, version)
         artifact = _select_artifact(metadata.get("urls", []))
         if artifact is None:
             raise PyPIError(f"No usable artifact for {package_name}=={version}")
 
-        if self.cache_dir is not None:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-            target = self.cache_dir / f"{package_name}-{version}"
-        else:
-            target = Path(tempfile.mkdtemp(prefix="ephemeral_scope_pkg_"))
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         target.mkdir(parents=True, exist_ok=True)
 
         filename = artifact["filename"]
-        download_dir = Path(tempfile.mkdtemp(prefix="ephemeral_scope_dl_"))
+        download_dir = Path(tempfile.mkdtemp(prefix="ephemeral-scope-download-"))
         archive = download_dir / filename
         try:
             try:
@@ -77,15 +83,42 @@ class PyPIClient:
             except urllib.error.URLError as exc:
                 raise PyPIError(f"Could not download {filename}: {exc}") from exc
 
-            _extract(archive, target)
+            try:
+                _extract(archive, target)
+            except Exception:
+                shutil.rmtree(target, ignore_errors=True)
+                raise
         finally:
             shutil.rmtree(download_dir, ignore_errors=True)
 
-        # Source distributions nest everything under `<name>-<version>/`
-        entries = [p for p in target.iterdir() if p.is_dir()]
-        if len(entries) == 1 and entries[0].name == f"{package_name}-{version}":
-            return entries[0]
-        return target
+        cached = _source_root(target, package_name, version)
+        if cached is None:
+            raise PyPIError(f"Extracted {package_name}=={version} produced no files")
+        return cached
+
+
+def _cache_key(package_name: str, version: str) -> str:
+    """A single path component, so the cache cannot be pointed outside itself."""
+    key = f"{package_name}-{version}"
+    if "/" in key or "\\" in key or ".." in key or not key.strip("."):
+        raise PyPIError(f"Refusing cache path for {package_name}=={version}")
+    return key
+
+
+def _source_root(target: Path, package_name: str, version: str) -> Path | None:
+    """The directory that holds the package, or None when nothing is cached.
+
+    Source distributions unpack into ``{name}-{version}/`` inside the cache
+    directory. A cache hit has to apply the same rule as a fresh extract, or
+    the second lookup returns the outer directory and the snapshot misses
+    the package.
+    """
+    if not target.is_dir() or not any(target.iterdir()):
+        return None
+    entries = [entry for entry in target.iterdir() if entry.is_dir()]
+    if len(entries) == 1 and entries[0].name == f"{package_name}-{version}":
+        return entries[0]
+    return target
 
 
 def _select_artifact(urls: list[dict]) -> dict | None:

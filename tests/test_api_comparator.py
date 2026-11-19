@@ -94,6 +94,9 @@ def test_parameter_renamed():
     )
     kinds = kinds_for(changes, "requests.get")
     assert ChangeType.PARAMETER_RENAMED in kinds
+    # The generic record is still emitted; the report suppresses it when a
+    # specific parameter change names the same symbol.
+    assert ChangeType.SIGNATURE_CHANGED in kinds
     # A rename must not also be reported as an unrelated add plus remove.
     assert ChangeType.PARAMETER_REMOVED not in kinds
 

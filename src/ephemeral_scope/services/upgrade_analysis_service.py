@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from packaging.utils import canonicalize_name
 
@@ -99,7 +101,15 @@ class UpgradeAnalysisService:
         to API changes, and both before a release note can be judged
         relevant to them. Inference comes last because it consumes
         everything else.
+
+        A ZIP is extracted into a temporary directory that is deleted before
+        this method returns, including when analysis fails. The report holds
+        the paths it already recorded; it does not need the files afterwards.
         """
+        with self._open_project(request.project_path) as root:
+            return self._analyze(replace(request, project_path=root))
+
+    def _analyze(self, request: AnalysisRequest) -> UpgradeReport:
         manifest = self.load_project(request.project_path)
         manifest = replace(
             manifest,
@@ -126,6 +136,12 @@ class UpgradeAnalysisService:
             classified, usages, affected_changes, upgrade
         )
         references = self.test_mapper.map(manifest, [item.usage for item in affected])
+
+        # File reading is done. The report must not keep the absolute paths,
+        # because a ZIP's extraction directory is deleted when analyze returns.
+        usages, affected, references, declared, warnings = _relative_to_project(
+            manifest.root_path, usages, affected, references, declared, warnings
+        )
 
         facts = self._facts(
             upgrade, usages, api_changes, affected, classified, evidence, references
@@ -182,16 +198,31 @@ class UpgradeAnalysisService:
 
     def find_affected_usages(self, request: AnalysisRequest) -> list[AffectedUsage]:
         """Report the places in the project that the upgrade lands on."""
-        manifest = self.load_project(request.project_path)
-        usages = self.usage_analyzer.analyze(manifest, request.package_name)
-        changes = self.compare_versions(request)
-        return self.matcher.match(usages, changes)
+        with self._open_project(request.project_path) as root:
+            scoped = replace(request, project_path=root)
+            manifest = self.load_project(scoped.project_path)
+            usages = self.usage_analyzer.analyze(manifest, scoped.package_name)
+            changes = self.compare_versions(scoped)
+            return self.matcher.match(usages, changes)
 
-    def load_project(self, project_path: Path) -> ProjectManifest:
-        """Accept either a directory or a ZIP archive."""
+    @contextmanager
+    def _open_project(self, project_path: Path) -> Iterator[Path]:
+        """Yield the project root, deleting a ZIP extraction afterwards."""
         path = Path(project_path)
         if path.is_file() and path.suffix == ".zip":
-            return self.project_loader.load_zip(path)
+            with TemporaryDirectory(prefix="ephemeral-scope-upload-") as directory:
+                yield self.project_loader.extract_zip(path, Path(directory))
+            return
+        yield path
+
+    def load_project(self, project_path: Path) -> ProjectManifest:
+        """Load a directory. ZIP archives are extracted by ``_open_project``."""
+        path = Path(project_path)
+        if path.is_file() and path.suffix == ".zip":
+            raise ValueError(
+                "A ZIP must be extracted by the caller, so the directory can "
+                "be deleted after analysis."
+            )
         return self.project_loader.load_directory(path)
 
     def compare_versions(self, request: AnalysisRequest) -> list[ApiChange]:
@@ -304,3 +335,63 @@ class UpgradeAnalysisService:
                 test_references=references,
                 engine=self.risk_engine,
             )
+
+
+def _relative(path: Path, root: Path) -> Path:
+    """Path relative to the project root, left unchanged when it is outside."""
+    try:
+        return path.relative_to(root)
+    except ValueError:
+        return path
+
+
+def _relative_to_project(
+    root: Path,
+    usages: list[ApiUsage],
+    affected: list[AffectedUsage],
+    references: list[TestReference],
+    declared: Dependency | None,
+    warnings: tuple[AnalysisWarning, ...],
+) -> tuple[
+    list[ApiUsage],
+    list[AffectedUsage],
+    list[TestReference],
+    Dependency | None,
+    tuple[AnalysisWarning, ...],
+]:
+    relative_usages = [
+        replace(usage, file=_relative(usage.file, root)) for usage in usages
+    ]
+    relative_affected = [
+        replace(item, usage=replace(item.usage, file=_relative(item.usage.file, root)))
+        for item in affected
+    ]
+    relative_references = [
+        replace(
+            reference,
+            test_file=_relative(reference.test_file, root),
+            source_file=_relative(reference.source_file, root),
+        )
+        for reference in references
+    ]
+    if declared is not None:
+        declared = replace(
+            declared, source_file=_relative(declared.source_file, root)
+        )
+    relative_warnings = tuple(_relativize_warning(warning, root) for warning in warnings)
+    return (
+        relative_usages,
+        relative_affected,
+        relative_references,
+        declared,
+        relative_warnings,
+    )
+
+
+def _relativize_warning(warning: AnalysisWarning, root: Path) -> AnalysisWarning:
+    """Rewrite an absolute project path inside a warning message."""
+    prefix = root.as_posix().rstrip("/") + "/"
+    message = warning.message.replace(prefix, "")
+    if message == warning.message:
+        return warning
+    return replace(warning, message=message)

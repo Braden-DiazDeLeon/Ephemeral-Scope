@@ -13,7 +13,12 @@ from pathlib import Path
 from ephemeral_scope.ml.release_note_classifier import ReleaseNoteClassifier
 from ephemeral_scope.services.upgrade_analysis_service import UpgradeAnalysisService
 
-DEFAULT_MODEL_PATH = Path("models/release_note_classifier.joblib")
+# parents[2] is the repository root: this file lives at
+# src/ephemeral_scope/main.py. A path relative to the working directory
+# only resolves when the process was started from that root.
+DEFAULT_MODEL_PATH = (
+    Path(__file__).resolve().parents[2] / "models" / "release_note_classifier.joblib"
+)
 
 
 def model_path() -> Path:

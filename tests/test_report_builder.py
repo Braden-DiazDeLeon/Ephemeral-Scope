@@ -191,6 +191,49 @@ class TestMigrationActions:
 
         assert "Replace pandas.DataFrame.append with pandas.concat." in actions
 
+    def test_a_specific_parameter_change_suppresses_the_generic_one(self):
+        actions = migration_actions(
+            UPGRADE,
+            affected=[
+                affected("requests.get", ChangeType.SIGNATURE_CHANGED),
+                affected(
+                    "requests.get",
+                    ChangeType.PARAMETER_RENAMED,
+                    details="params -> query",
+                ),
+            ],
+        )
+
+        assert actions == (
+            "Update the call to requests.get in src/client.py:12; "
+            "a parameter was renamed (params -> query).",
+        )
+
+    def test_a_changed_default_suppresses_the_generic_signature_warning(self):
+        actions = migration_actions(
+            UPGRADE,
+            affected=[
+                affected("requests.get", ChangeType.SIGNATURE_CHANGED),
+                affected(
+                    "requests.get",
+                    ChangeType.DEFAULT_CHANGED,
+                    details="'verify' default False -> True",
+                ),
+            ],
+        )
+
+        assert actions == (
+            "Review verify=False usage in src/client.py; the default is now True.",
+        )
+
+    def test_a_signature_change_without_a_parameter_detail_is_kept(self):
+        actions = migration_actions(
+            UPGRADE,
+            affected=[affected("requests.get", ChangeType.SIGNATURE_CHANGED)],
+        )
+
+        assert "signature is no longer compatible" in actions[0]
+
     def test_a_removed_symbol_without_a_named_replacement_names_the_site(self):
         actions = migration_actions(
             PANDAS, affected=[affected("pandas.DataFrame.append", line=4)]
