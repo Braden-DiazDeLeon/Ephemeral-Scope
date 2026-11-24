@@ -119,7 +119,7 @@ def report_dict(report: UpgradeReport, project_root: Path | None = None) -> dict
     """
     evidence = report.evidence
     affected_keys = {
-        (str(item.usage.file), item.usage.line, item.usage.symbol)
+        (_posix(item.usage.file), item.usage.line, item.usage.symbol)
         for item in report.affected_usages
     }
     open_today = {record.vulnerability_id for record in evidence.current_vulnerabilities}
@@ -145,7 +145,7 @@ def report_dict(report: UpgradeReport, project_root: Path | None = None) -> dict
         "usages": [
             {
                 **_usage(usage),
-                "affected": (str(usage.file), usage.line, usage.symbol)
+                "affected": (_posix(usage.file), usage.line, usage.symbol)
                 in affected_keys,
             }
             for usage in report.usages[:MAX_USAGES]
@@ -183,7 +183,7 @@ def _reasons(reasons: Iterable[RiskReason]) -> list[dict]:
 def _usage(usage: ApiUsage) -> dict:
     return {
         "symbol": usage.symbol,
-        "file": str(usage.file),
+        "file": _posix(usage.file),
         "line": usage.line,
         "column": usage.column,
         "usage_kind": str(usage.usage_kind),
@@ -242,7 +242,7 @@ def _finding(finding: RiskFinding) -> dict:
         "risk_level": str(finding.risk_level),
         "reason": finding.reason,
         "rule_name": finding.rule_name,
-        "file": None if finding.file is None else str(finding.file),
+        "file": None if finding.file is None else _posix(finding.file),
         "line": finding.line,
         "symbol": finding.symbol,
         "supporting_facts": list(finding.supporting_facts),
@@ -257,14 +257,19 @@ def _warnings(warnings: Iterable[AnalysisWarning]) -> list[dict]:
     ]
 
 
+def _posix(path: Path) -> str:
+    """Forward slashes on every platform, so reports read the same."""
+    return Path(path).as_posix()
+
+
 def _relative(path: Path, root: Path | None) -> str:
     path = Path(path)
     if root is not None:
         try:
-            return str(path.relative_to(root))
+            return path.relative_to(root).as_posix()
         except ValueError:
             pass
-    return path.name if path.is_absolute() else str(path)
+    return path.name if path.is_absolute() else path.as_posix()
 
 
 def source_snippet(

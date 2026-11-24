@@ -134,7 +134,7 @@ class ProjectStore:
                 source_files=len(manifest.source_files),
                 test_files=len(manifest.test_files),
                 dependency_files=tuple(
-                    str(path.relative_to(root)) for path in manifest.dependency_files
+                    path.relative_to(root).as_posix() for path in manifest.dependency_files
                 ),
                 dependencies=dependencies,
                 warnings=tuple(warnings),
