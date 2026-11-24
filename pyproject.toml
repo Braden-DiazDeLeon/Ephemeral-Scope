@@ -26,6 +26,16 @@ dependencies = [
 dev = [
     "pytest",
 ]
+# The HTTP API in ephemeral_scope.api. Kept out of the core dependencies so
+# the analysis pipeline installs and tests without a web framework; the API
+# tests skip themselves when these are absent.
+web = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    # TestClient, used by tests/test_api.py and tests/e2e/test_api_e2e.py.
+    "httpx",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
